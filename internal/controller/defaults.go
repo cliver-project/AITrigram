@@ -42,6 +42,9 @@ func DefaultLLMEngineSpec(engineType *aitrigramv1.LLMEngineType) *aitrigramv1.LL
 	if *engineType == aitrigramv1.LLMEngineTypeOllama {
 		return defaultsOfOllamaEngine()
 	}
+	if *engineType == aitrigramv1.LLMEngineTypeVLLM {
+		return defaultsOfVLLMEngine()
+	}
 	// TODO add more for other types
 	return &aitrigramv1.LLMEngineSpec{}
 }
@@ -61,7 +64,37 @@ func defaultsOfOllamaEngine() *aitrigramv1.LLMEngineSpec {
 
 const (
 	defaultOllamaImage string = "ollama/ollama:latest"
+	defaultVLLMImage   string = "vllm/vllm-openai:latest"
 )
+
+func defaultsModelDeploymentSpecVLLM() *aitrigramv1.ModelDeploymentTemplate {
+	cacheSizeLimit := resource.MustParse("10Gi")
+	return &aitrigramv1.ModelDeploymentTemplate{
+		Args:            []string{"--host", "0.0.0.0", "--port", "8000"},
+		DownloadImage:   defaultVLLMImage,
+		DownloadScripts: `mkdir -p {{ .ModelDir }} && cd {{ .ModelDir }} && python -c "from huggingface_hub import snapshot_download; snapshot_download('{{ .ModelName }}', cache_dir='{{ .ModelDir }}', token=os.getenv('HUGGING_FACE_HUB_TOKEN'))"`,
+		Storage: &aitrigramv1.LLMEngineStorage{
+			ModelsStorage: &aitrigramv1.ModelStorage{
+				Path: "/data/models",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+			CacheStorage: &aitrigramv1.CacheStorage{
+				Path: "/tmp",
+				EmptyDirVolumeSource: &corev1.EmptyDirVolumeSource{
+					SizeLimit: &cacheSizeLimit,
+				},
+			},
+		},
+		Envs: &[]corev1.EnvVar{
+			{
+				Name:  "HF_HOME",
+				Value: "/data/models",
+			},
+		},
+	}
+}
 
 func defaultsModelDeploymentSpecOllama() *aitrigramv1.ModelDeploymentTemplate {
 	cacheSizeLimit := resource.MustParse("2Gi")
@@ -96,9 +129,24 @@ func defaultsModelDeploymentSpecOllama() *aitrigramv1.ModelDeploymentTemplate {
 	}
 }
 
+// Returns default setup for VLLM engine
+func defaultsOfVLLMEngine() *aitrigramv1.LLMEngineSpec {
+	vllm := aitrigramv1.LLMEngineTypeVLLM
+	vllmEngine := &aitrigramv1.LLMEngineSpec{
+		EngineType:              vllm,
+		Image:                   defaultVLLMImage,
+		Port:                    8000,
+		ServicePort:             8080,
+		ModelDeploymentTemplate: defaultsModelDeploymentSpecVLLM(),
+	}
+	return vllmEngine
+}
+
 var (
 	ollamaEngineType                                   = aitrigramv1.LLMEngineTypeOllama
 	DefaultOllamaEngineSpec *aitrigramv1.LLMEngineSpec = DefaultLLMEngineSpec(&ollamaEngineType)
+	vllmEngineType                                     = aitrigramv1.LLMEngineTypeVLLM
+	DefaultVLLMEngineSpec   *aitrigramv1.LLMEngineSpec = DefaultLLMEngineSpec(&vllmEngineType)
 )
 
 // Merge the ModelDeploymentTemplate, the later settings overrides the previous ones
