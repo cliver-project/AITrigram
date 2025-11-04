@@ -34,6 +34,10 @@ import (
 	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
 )
 
+const (
+	ModelRepositoryFinalizer = "modelrepository.aitrigram.ihomeland.cn/finalizer"
+)
+
 // ModelRepositoryReconciler reconciles a ModelRepository object
 type ModelRepositoryReconciler struct {
 	client.Client
@@ -73,8 +77,8 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(modelRepo, "modelrepository.aitrigram.ihomeland.cn/finalizer") {
-		controllerutil.AddFinalizer(modelRepo, "modelrepository.aitrigram.ihomeland.cn/finalizer")
+	if !controllerutil.ContainsFinalizer(modelRepo, ModelRepositoryFinalizer) {
+		controllerutil.AddFinalizer(modelRepo, ModelRepositoryFinalizer)
 		if err := r.Update(ctx, modelRepo); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -174,13 +178,15 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		// Default images based on source origin
 		switch modelRepo.Spec.Source.Origin {
 		case aitrigramv1.ModelOriginHuggingFace:
-			image = "python:3.11-slim"
+			// we choose vllm image as it has transformers installed
+			// and we don't need to pull another hugging face image
+			image = DefaultVLLMImage
 		case aitrigramv1.ModelOriginOllama:
-			image = "ollama/ollama:latest"
+			image = DefaultOllamaImage
 		case aitrigramv1.ModelOriginGGUF:
-			image = "curlimages/curl:latest"
-		default:
 			image = "python:3.11-slim"
+		default:
+			image = "busybox:latest"
 		}
 	}
 
@@ -188,7 +194,7 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 	downloadScriptTemplate := modelRepo.Spec.DownloadScripts
 	if downloadScriptTemplate == "" {
 		// Default scripts based on origin
-		downloadScriptTemplate = r.getDefaultDownloadScript(modelRepo.Spec.Source.Origin)
+		downloadScriptTemplate = buildDefaultDownloadScript(modelRepo.Spec.Source.Origin)
 	}
 
 	// Render the template using pongo2 with model-specific context
@@ -289,139 +295,6 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 	return job, nil
 }
 
-// getHuggingFaceDownloadScript returns the default HuggingFace download script
-func (r *ModelRepositoryReconciler) getHuggingFaceDownloadScript() string {
-	return `#!/usr/bin/env python3
-import os
-from huggingface_hub import snapshot_download
-
-model_id = "{{ ModelId }}"
-model_name = "{{ ModelName }}"
-mount_path = "{{ MountPath }}"
-target_path = os.path.join(mount_path, model_name)
-
-print(f"Downloading model {model_id} to {target_path}...")
-
-# Check if HF_TOKEN is available in environment
-hf_token = os.environ.get("HF_TOKEN")
-
-try:
-    snapshot_download(
-        repo_id=model_id,
-        local_dir=target_path,
-        local_dir_use_symlinks=False,
-        token=hf_token,
-    )
-    print("Download completed successfully")
-except Exception as e:
-    print(f"Error downloading model: {e}")
-    exit(1)
-`
-}
-
-func (r *ModelRepositoryReconciler) getDefaultDownloadScript(origin aitrigramv1.ModelOrigin) string {
-	switch origin {
-	case aitrigramv1.ModelOriginHuggingFace:
-		return r.getHuggingFaceDownloadScript()
-	case aitrigramv1.ModelOriginOllama:
-		// Bash script using ollama
-		return `#!/bin/bash
-set -e
-echo "Pulling model {{ ModelId }} using ollama..."
-ollama pull {{ ModelId }}
-echo "Copying model to {{ MountPath }}/{{ ModelName }}..."
-cp -r ~/.ollama/models/{{ ModelId }} {{ MountPath }}/{{ ModelName }}
-echo "Model copied successfully"
-`
-	case aitrigramv1.ModelOriginGGUF:
-		// Bash script using curl
-		return `#!/bin/bash
-set -e
-echo "Downloading GGUF model {{ ModelId }} to {{ MountPath }}/{{ ModelName }}..."
-mkdir -p {{ MountPath }}/{{ ModelName }}
-curl -L {{ ModelId }} -o {{ MountPath }}/{{ ModelName }}/model.gguf
-echo "Download completed successfully"
-`
-	case aitrigramv1.ModelOriginLocal:
-		// Simple bash script for local models
-		return `#!/bin/bash
-echo "Local model source - no download needed"
-echo "Model should already be available at {{ MountPath }}"
-ls -la {{ MountPath }}
-`
-	default:
-		// Default to HuggingFace Python script
-		return r.getHuggingFaceDownloadScript()
-	}
-}
-
-func (r *ModelRepositoryReconciler) getDefaultDeleteScript(origin aitrigramv1.ModelOrigin) string {
-	switch origin {
-	case aitrigramv1.ModelOriginHuggingFace:
-		// Bash script to remove HuggingFace model directory
-		return `#!/bin/bash
-set -e
-echo "Deleting HuggingFace model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	case aitrigramv1.ModelOriginOllama:
-		// Bash script using ollama rm command
-		return `#!/bin/bash
-set -e
-echo "Deleting Ollama model {{ ModelId }}..."
-if ollama list | grep -q "{{ ModelId }}"; then
-  ollama rm {{ ModelId }}
-  echo "Ollama model {{ ModelId }} deleted successfully"
-else
-  echo "Ollama model {{ ModelId }} not found, nothing to delete"
-fi
-
-# Also clean up local storage if exists
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  echo "Removing model files from {{ MountPath }}/{{ ModelName }}..."
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model files deleted"
-fi
-`
-	case aitrigramv1.ModelOriginGGUF:
-		// Bash script to remove GGUF model directory
-		return `#!/bin/bash
-set -e
-echo "Deleting GGUF model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	case aitrigramv1.ModelOriginLocal:
-		// For local models, just log - don't delete by default
-		return `#!/bin/bash
-echo "Local model source - skipping deletion of {{ MountPath }}/{{ ModelName }}"
-echo "If you want to delete local models, provide custom deleteScripts"
-ls -la {{ MountPath }} || true
-`
-	default:
-		// Default to removing directory
-		return `#!/bin/bash
-set -e
-echo "Deleting model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	}
-}
-
 func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
 	logger := log.FromContext(ctx)
 
@@ -433,7 +306,7 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 	}
 
 	// Remove finalizer
-	controllerutil.RemoveFinalizer(modelRepo, "modelrepository.aitrigram.ihomeland.cn/finalizer")
+	controllerutil.RemoveFinalizer(modelRepo, ModelRepositoryFinalizer)
 	return r.Update(ctx, modelRepo)
 }
 
@@ -445,7 +318,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 	deleteScriptTemplate := modelRepo.Spec.DeleteScripts
 	if deleteScriptTemplate == "" {
 		// Get default delete script based on origin
-		deleteScriptTemplate = r.getDefaultDeleteScript(modelRepo.Spec.Source.Origin)
+		deleteScriptTemplate = buildDefaultDeleteScript(modelRepo.Spec.Source.Origin)
 	}
 
 	// Render the template using pongo2 with model-specific context
@@ -523,7 +396,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		},
 		Spec: batchv1.JobSpec{
 			// Set TTL to automatically delete the job after completion
-			TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(300), // 5 minutes
+			TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(1800), // 30 minutes
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{

@@ -124,7 +124,7 @@ func NewRunCommand() *cobra.Command {
 func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 	log.Info("Starting llmengine-operator", "version", version)
 	kubeConfig := ctrl.GetConfigOrDie()
-	kubeConfig.UserAgent = "llmengine-operator"
+	kubeConfig.UserAgent = opts.PodName
 	leaseDuration := time.Second * 60
 	renewDeadline := time.Second * 40
 	retryPeriod := time.Second * 15

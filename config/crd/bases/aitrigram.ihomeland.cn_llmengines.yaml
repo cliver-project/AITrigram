@@ -1976,6 +1976,14 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              replicas:
+                default: 1
+                description: |-
+                  Replicas specifies the number of pod replicas for each model deployment
+                  Each ModelRef will get its own Deployment with this many replicas
+                format: int32
+                minimum: 1
+                type: integer
               servicePort:
                 description: ServicePort specifies the port for the ClusterIP Service
                   managed by this engine.

@@ -38,6 +38,10 @@ import (
 	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
 )
 
+const (
+	LLMEngineFinalizer = "llmengine.aitrigram.ihomeland.cn/finalizer"
+)
+
 // LLMEngineReconciler reconciles a LLMEngine object
 type LLMEngineReconciler struct {
 	client.Client
@@ -69,8 +73,8 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(llmEngine, "llmengine.aitrigram.ihomeland.cn/finalizer") {
-		controllerutil.AddFinalizer(llmEngine, "llmengine.aitrigram.ihomeland.cn/finalizer")
+	if !controllerutil.ContainsFinalizer(llmEngine, LLMEngineFinalizer) {
+		controllerutil.AddFinalizer(llmEngine, LLMEngineFinalizer)
 		if err := r.Update(ctx, llmEngine); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -90,32 +94,49 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for _, modelRepo := range modelRepos {
 		if modelRepo.Status.Phase != aitrigramv1.ModelRepositoryPhaseDownloaded {
 			msg := fmt.Sprintf("Waiting for ModelRepository %s (phase: %s)", modelRepo.Name, modelRepo.Status.Phase)
+			//TODO maybe trigger the downloading if the autodownload is false
 			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
 		}
 	}
 
-	// Create or update Deployment
-	deployment, err := r.createOrUpdateDeployment(ctx, llmEngine, modelRepos)
-	if err != nil {
-		return r.updateStatus(ctx, llmEngine, "Error", "DeploymentFailed", err.Error())
-	}
+	// Create one Deployment and Service per ModelRef
+	totalReady := 0
+	totalDeployments := len(modelRepos)
 
-	// Create or update Service
-	if err := r.createOrUpdateService(ctx, llmEngine); err != nil {
-		return r.updateStatus(ctx, llmEngine, "Error", "ServiceFailed", err.Error())
+	for _, modelRepo := range modelRepos {
+		// Create or update Deployment for this model
+		deployment, err := r.createOrUpdateDeploymentForModel(ctx, llmEngine, modelRepo)
+		if err != nil {
+			return r.updateStatus(ctx, llmEngine, "Error", "DeploymentFailed",
+				fmt.Sprintf("Failed to create deployment for model %s: %v", modelRepo.Name, err))
+		}
+
+		// Create or update Service for this model
+		if err := r.createOrUpdateServiceForModel(ctx, llmEngine, modelRepo); err != nil {
+			return r.updateStatus(ctx, llmEngine, "Error", "ServiceFailed",
+				fmt.Sprintf("Failed to create service for model %s: %v", modelRepo.Name, err))
+		}
+
+		// Count ready deployments
+		if deployment.Status.ReadyReplicas > 0 {
+			totalReady++
+		}
 	}
 
 	// Update status based on deployment readiness
-	if deployment.Status.ReadyReplicas > 0 {
-		modelNames := make([]string, len(modelRepos))
-		for i, mr := range modelRepos {
-			modelNames[i] = mr.Name
-		}
-		llmEngine.Status.ModelRepositories = modelNames
-		return r.updateStatus(ctx, llmEngine, "Running", "DeploymentReady", fmt.Sprintf("Serving %d models", len(modelRepos)))
+	modelNames := make([]string, len(modelRepos))
+	for i, mr := range modelRepos {
+		modelNames[i] = mr.Name
+	}
+	llmEngine.Status.ModelRepositories = modelNames
+
+	if totalReady == totalDeployments {
+		return r.updateStatus(ctx, llmEngine, "Running", "DeploymentsReady",
+			fmt.Sprintf("All %d model deployments ready", totalDeployments))
 	}
 
-	return r.updateStatus(ctx, llmEngine, "Starting", "DeploymentCreated", "Waiting for deployment to become ready")
+	return r.updateStatus(ctx, llmEngine, "Starting", "DeploymentsCreated",
+		fmt.Sprintf("%d/%d deployments ready", totalReady, totalDeployments))
 }
 
 func (r *LLMEngineReconciler) fetchModelRepositories(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) ([]*aitrigramv1.ModelRepository, error) {
@@ -136,8 +157,8 @@ func (r *LLMEngineReconciler) fetchModelRepositories(ctx context.Context, llmEng
 	return modelRepos, nil
 }
 
-func (r *LLMEngineReconciler) createOrUpdateDeployment(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepos []*aitrigramv1.ModelRepository) (*appsv1.Deployment, error) {
-	deployment := r.buildDeployment(llmEngine, modelRepos)
+func (r *LLMEngineReconciler) createOrUpdateDeploymentForModel(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) (*appsv1.Deployment, error) {
+	deployment := r.buildDeploymentForModel(llmEngine, modelRepo)
 
 	// Set owner reference
 	if err := ctrl.SetControllerReference(llmEngine, deployment, r.Scheme); err != nil {
@@ -166,19 +187,32 @@ func (r *LLMEngineReconciler) createOrUpdateDeployment(ctx context.Context, llmE
 	return existing, nil
 }
 
-func (r *LLMEngineReconciler) buildDeployment(llmEngine *aitrigramv1.LLMEngine, modelRepos []*aitrigramv1.ModelRepository) *appsv1.Deployment {
+// detectGPUAvailability checks if GPU resources are requested
+// Returns true if GPU resources are requested, false otherwise
+func detectGPUAvailability(llmEngine *aitrigramv1.LLMEngine) bool {
+	// For now, we'll default to GPU mode
+	// TODO: Add resource requests/limits to LLMEngineSpec to detect GPU
+	// or check node labels/annotations
+	return true
+}
+
+func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) *appsv1.Deployment {
+	// Get replicas from spec, default to 1
 	replicas := int32(1)
+	if llmEngine.Spec.Replicas != nil {
+		replicas = *llmEngine.Spec.Replicas
+	}
 
 	// Determine image based on engine type
 	image := llmEngine.Spec.Image
 	if image == "" {
 		switch llmEngine.Spec.EngineType {
 		case aitrigramv1.LLMEngineTypeOllama:
-			image = "ollama/ollama:latest"
+			image = DefaultOllamaImage
 		case aitrigramv1.LLMEngineTypeVLLM:
-			image = "vllm/vllm-openai:latest"
+			image = DefaultVLLMImage
 		default:
-			image = "vllm/vllm-openai:latest"
+			image = DefaultVLLMImage
 		}
 	}
 
@@ -191,55 +225,69 @@ func (r *LLMEngineReconciler) buildDeployment(llmEngine *aitrigramv1.LLMEngine, 
 		case aitrigramv1.LLMEngineTypeVLLM:
 			port = 8000
 		default:
-			port = 8000
+			port = 8080
 		}
 	}
+	storagePaths := GetStoragePaths(llmEngine.Spec.EngineType)
 
-	// Build volume mounts and volumes from ModelRepositories
-	volumeMounts := []corev1.VolumeMount{}
-	volumes := []corev1.Volume{}
-
-	for i, modelRepo := range modelRepos {
-		volumeName := fmt.Sprintf("model-%d", i)
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      volumeName,
-			MountPath: modelRepo.Spec.Storage.Path,
-		})
-		volumes = append(volumes, corev1.Volume{
-			Name:         volumeName,
+	// Build volume mounts and volumes for this specific model (read-only)
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "model-storage",
+			MountPath: storagePaths.ModelPath,
+			ReadOnly:  true, // Read-only for LLMEngine pods
+		},
+	}
+	volumes := []corev1.Volume{
+		{
+			Name:         "model-storage",
 			VolumeSource: modelRepo.Spec.Storage.VolumeSource,
-		})
+		},
 	}
 
-	// Add cache volume if specified
-	if llmEngine.Spec.Cache != nil {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "cache",
-			MountPath: llmEngine.Spec.Cache.Path,
-		})
-		volumes = append(volumes, corev1.Volume{
-			Name:         "cache",
-			VolumeSource: llmEngine.Spec.Cache.VolumeSource,
-		})
-	}
+	// Add cache volumes (per-pod, not shared)
+	cacheVolumeMounts, cacheVolumes := buildCacheVolumes(llmEngine.Spec.EngineType)
+	volumeMounts = append(volumeMounts, cacheVolumeMounts...)
+	volumes = append(volumes, cacheVolumes...)
 
-	// Build container args
+	// Detect GPU availability
+	hasGPU := detectGPUAvailability(llmEngine)
+
+	// Build model path using production-ready paths
+	modelPath := fmt.Sprintf("%s/%s", storagePaths.ModelPath, modelRepo.Name)
+
+	// Build container args if not specified
 	args := llmEngine.Spec.Args
 	if len(args) == 0 {
 		switch llmEngine.Spec.EngineType {
 		case aitrigramv1.LLMEngineTypeOllama:
-			args = []string{"/bin/ollama", "serve"}
+			args = buildOllamaArgs()
 		case aitrigramv1.LLMEngineTypeVLLM:
-			args = []string{"--host", "0.0.0.0", "--port", fmt.Sprintf("%d", port)}
+			args = buildVLLMArgs(modelPath, port, hasGPU)
 		}
 	}
 
+	// Build environment variables with defaults, user defined takes precedence
+	var containerEnv []corev1.EnvVar
+	switch llmEngine.Spec.EngineType {
+	case aitrigramv1.LLMEngineTypeOllama:
+		containerEnv = buildOllamaEnv(hasGPU, llmEngine.Spec.Env)
+	case aitrigramv1.LLMEngineTypeVLLM:
+		containerEnv = buildVLLMEnv(hasGPU, llmEngine.Spec.Env)
+	default:
+		containerEnv = buildVLLMEnv(hasGPU, llmEngine.Spec.Env)
+	}
+
+	// Generate unique name for this deployment (engine-name + model-name)
+	deploymentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      llmEngine.Name,
+			Name:      deploymentName,
 			Namespace: llmEngine.Namespace,
 			Labels: map[string]string{
 				"app":         llmEngine.Name,
+				"model":       modelRepo.Name,
 				"engine-type": string(llmEngine.Spec.EngineType),
 			},
 		},
@@ -247,13 +295,15 @@ func (r *LLMEngineReconciler) buildDeployment(llmEngine *aitrigramv1.LLMEngine, 
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app": llmEngine.Name,
+					"app":   llmEngine.Name,
+					"model": modelRepo.Name,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
 						"app":         llmEngine.Name,
+						"model":       modelRepo.Name,
 						"engine-type": string(llmEngine.Spec.EngineType),
 					},
 				},
@@ -263,7 +313,7 @@ func (r *LLMEngineReconciler) buildDeployment(llmEngine *aitrigramv1.LLMEngine, 
 							Name:  "llm-engine",
 							Image: image,
 							Args:  args,
-							Env:   llmEngine.Spec.Env,
+							Env:   containerEnv,
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",
@@ -283,7 +333,7 @@ func (r *LLMEngineReconciler) buildDeployment(llmEngine *aitrigramv1.LLMEngine, 
 	return deployment
 }
 
-func (r *LLMEngineReconciler) createOrUpdateService(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
+func (r *LLMEngineReconciler) createOrUpdateServiceForModel(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) error {
 	servicePort := llmEngine.Spec.ServicePort
 	if servicePort == 0 {
 		servicePort = 8080
@@ -301,17 +351,22 @@ func (r *LLMEngineReconciler) createOrUpdateService(ctx context.Context, llmEngi
 		}
 	}
 
+	// Generate unique name for this service (engine-name + model-name)
+	serviceName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      llmEngine.Name,
+			Name:      serviceName,
 			Namespace: llmEngine.Namespace,
 			Labels: map[string]string{
-				"app": llmEngine.Name,
+				"app":   llmEngine.Name,
+				"model": modelRepo.Name,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"app": llmEngine.Name,
+				"app":   llmEngine.Name,
+				"model": modelRepo.Name,
 			},
 			Type: corev1.ServiceTypeClusterIP,
 			Ports: []corev1.ServicePort{
@@ -366,7 +421,7 @@ func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitri
 
 func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
 	// Remove finalizer
-	controllerutil.RemoveFinalizer(llmEngine, "llmengine.aitrigram.ihomeland.cn/finalizer")
+	controllerutil.RemoveFinalizer(llmEngine, LLMEngineFinalizer)
 	return r.Update(ctx, llmEngine)
 }
 

@@ -72,6 +72,13 @@ type LLMEngineSpec struct {
 	// Cache specifies the storage configuration for the k-v cache
 	// +optional
 	Cache *ModelStorage `json:"cache,omitempty"`
+
+	// Replicas specifies the number of pod replicas for each model deployment
+	// Each ModelRef will get its own Deployment with this many replicas
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default:=1
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 // LLMEngineStatus defines the observed state of LLMEngine.
