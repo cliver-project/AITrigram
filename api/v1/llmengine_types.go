@@ -17,37 +17,9 @@ limitations under the License.
 package v1
 
 import (
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// ModelStorage defines the storage mount for the LLM model files.
-type ModelStorage struct {
-	// the path which will be mounted inside of the container
-	// +kubebuilder:validation:Required
-	Path string `json:"path"`
-	// the VolumeSource from which the storage comes from
-	corev1.VolumeSource `json:",inline"`
-}
-
-type CacheStorage struct {
-	// the mount path in the container for cache
-	// +kubebuilder:validation:Required
-	Path string `json:"path"`
-	// the mount path in the container
-	*corev1.EmptyDirVolumeSource `json:",inline"`
-}
-
-type LLMEngineStorage struct {
-	// This is the storage configuration for the k-v cache set up
-	// +optional
-	CacheStorage *CacheStorage `json:"cache,omitempty"`
-	// This presents where the LLM files are loaded from
-	// +optional
-	ModelsStorage *ModelStorage `json:"models,omitempty"`
-}
 
 // LLMEngineType defines the type of LLM engine.
 // +kubebuilder:validation:Enum=ollama;vllm
@@ -55,20 +27,37 @@ type LLMEngineType string
 
 const (
 	LLMEngineTypeOllama LLMEngineType = "ollama"
-	LLMEngineTypeVLLM   LLMEngineType = "vllm"
+	// vllm actually serves the openai compatible API
+	LLMEngineTypeVLLM LLMEngineType = "vllm"
 )
 
 // LLMEngineSpec defines the desired state of LLMEngine.
 type LLMEngineSpec struct {
-	// Type specifies the type of LLM engine (e.g., ollama, vllm).
+	// EngineType specifies the type of LLM engine (e.g., ollama, vllm).
 	// +kubebuilder:validation:Required
+	// +kubebuilder:default:=vllm
 	EngineType LLMEngineType `json:"engineType"`
 
-	// Image specifies the container image to use for the engine.
-	// +optional
-	Image string `json:"image"`
+	// ModelRefs lists the ModelRepository names that this engine will serve
+	// The engine will automatically mount storage from these ModelRepositories
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	ModelRefs []string `json:"modelRefs"`
 
-	// Port specifies the open HTTP port for the engine inside of the container
+	// Image specifies the container image to use for the engine.
+	// If not specified, a default image will be selected based on engineType
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Args specifies arguments to start the engine container.
+	// +optional
+	Args []string `json:"args,omitempty"`
+
+	// Env specifies environment variables for the engine container.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Port specifies the HTTP port for the engine inside the container
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
@@ -80,59 +69,44 @@ type LLMEngineSpec struct {
 	// +optional
 	ServicePort int32 `json:"servicePort,omitempty"`
 
-	// ModelDeploymentTemplate provides default values for LLMModel CRs.
+	// Cache specifies the storage configuration for the k-v cache
 	// +optional
-	ModelDeploymentTemplate *ModelDeploymentTemplate `json:"modelDeploymentTemplate,omitempty"`
-}
-
-type ModelDeploymentTemplate struct {
-
-	// Default arguments to start the engine container.
-	// +optional
-	Args []string `json:"args,omitempty"`
-
-	// Environment variables for the model container.
-	// +optional
-	Envs *[]corev1.EnvVar `json:"env,omitempty"`
-
-	// Storage specifies where the models are found and loaded
-	// +optional
-	Storage *LLMEngineStorage `json:"storage,omitempty"`
-
-	// DownloadImage for model preparation
-	// +optional
-	DownloadImage string `json:"downloadImage,omitempty"`
-
-	// DownloadScripts for model preparation
-	// +optional
-	DownloadScripts string `json:"downloadScripts,omitempty"`
-}
-
-func (m ModelDeploymentTemplate) String() string {
-	return fmt.Sprintf("Args: %s, Envs: %s, DownloadImage: %s, DownloadScripts: %s", m.Args, EnvsString(m.Envs), m.DownloadImage, m.DownloadScripts)
-}
-
-func EnvsString(envs *[]corev1.EnvVar) string {
-	if envs == nil {
-		return "nil"
-	}
-	result := ""
-	for i := range *envs {
-		result += fmt.Sprintf("Name: %s, Value: %s", (*envs)[i].Name, (*envs)[i].Value)
-	}
-	return result
+	Cache *ModelStorage `json:"cache,omitempty"`
 }
 
 // LLMEngineStatus defines the observed state of LLMEngine.
 type LLMEngineStatus struct {
+	// Phase represents the current phase of the LLM engine
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// Reason provides the reason for the current phase
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// Message provides additional information about the current phase
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// LastUpdated is the timestamp of the last status update
+	// +optional
+	LastUpdated *metav1.Time `json:"lastUpdated,omitempty"`
+
 	// Conditions represent the latest available observations of the LLMEngine's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	Ready      bool               `json:"ready"`
+
+	// ModelRepositories lists the ModelRepository resources being used
+	// +optional
+	ModelRepositories []string `json:"modelRepositories,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.spec.engineType`
+// +kubebuilder:printcolumn:name="Models",type=string,JSONPath=`.spec.modelRefs`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 type LLMEngine struct {
 	metav1.TypeMeta   `json:",inline"`

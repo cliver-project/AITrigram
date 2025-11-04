@@ -1,0 +1,91 @@
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: ModelRepository
+metadata:
+  name: llama3-7b
+spec:
+  # The modelName is the identifier within all ModelRepositories in the cluster
+  # If not specified, defaults to metadata.name (llama3-7b in this example)
+  # Uncomment below to override the default:
+  # modelName: llama3-model-name-in-repository
+  source:
+    origin: huggingface   # can be others: huggingface | gguf | local | ollama
+    modelId: meta-llama/llama3-7b    # this is the identifier of the model within the origin, so that it knows how to download it
+    hfTokenSecretRef:   # this is specific to huggingface, other type may have their own way to access the model to download
+      name: huggingface-token
+      key: token
+  storage:
+    path: /models
+    # Use PVC for persistent storage
+    persistentVolumeClaim:
+      claimName: vllm-shared-models
+    # Alternative: Use EmptyDir for temporary storage (uncomment below and comment out PVC)
+    # emptyDir: {}
+    # Alternative: Use HostPath for local storage (uncomment below and comment out PVC)
+    # hostPath:
+    #   path: /data/models
+    #   type: DirectoryOrCreate
+  autoDownload: true
+  # Optional: Specify custom download image (defaults based on origin)
+  # downloadImage: python:3.11-slim
+
+  # Optional: Specify custom download scripts with Jinja2 template support
+  # The script can be either bash or Python (auto-detected)
+  # Available template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+  # Environment variables are also available via {{ env.VAR_NAME }}
+
+  # Example: Custom Python script
+  # downloadScripts: |
+  #   #!/usr/bin/env python3
+  #   import os
+  #   from huggingface_hub import snapshot_download
+  #
+  #   model_id = "{{ ModelId }}"
+  #   target_path = os.path.join("{{ MountPath }}", "{{ ModelName }}")
+  #   hf_token = os.environ.get("HF_TOKEN")
+  #
+  #   print(f"Downloading {model_id} to {target_path}")
+  #   snapshot_download(
+  #       repo_id=model_id,
+  #       local_dir=target_path,
+  #       local_dir_use_symlinks=False,
+  #       token=hf_token,
+  #   )
+
+  # Example: Custom bash script
+  # downloadScripts: |
+  #   #!/bin/bash
+  #   set -e
+  #   echo "Downloading model {{ ModelId }}"
+  #   mkdir -p {{ MountPath }}/{{ ModelName }}
+  #   # Add your custom download logic here
+
+  # Optional: Specify custom delete scripts with Jinja2 template support
+  # The script can be either bash or Python (auto-detected)
+  # Available template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+  # Environment variables are also available via {{ env.VAR_NAME }}
+  # If not specified, default delete scripts will be used based on origin:
+  #   - huggingface: removes model directory
+  #   - ollama: runs "ollama rm {{ ModelId }}" then removes directory
+  #   - gguf: removes model directory
+  #   - local: skips deletion (logs only)
+
+  # Example: Custom delete script for Ollama
+  # deleteScripts: |
+  #   #!/bin/bash
+  #   set -e
+  #   echo "Deleting Ollama model {{ ModelId }}..."
+  #   ollama rm {{ ModelId }} || echo "Model not found in Ollama"
+  #   rm -rf {{ MountPath }}/{{ ModelName }}
+
+  # Example: Custom Python delete script
+  # deleteScripts: |
+  #   #!/usr/bin/env python3
+  #   import os
+  #   import shutil
+  #
+  #   model_path = os.path.join("{{ MountPath }}", "{{ ModelName }}")
+  #   if os.path.exists(model_path):
+  #       shutil.rmtree(model_path)
+  #       print(f"Deleted {model_path}")
+  #   else:
+  #       print(f"{model_path} does not exist")

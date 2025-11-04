@@ -20,17 +20,13 @@ resources:
   kind: LLMEngine
   path: github.com/gaol/AITrigram/api/v1
   version: v1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
 - api:
     crdVersion: v1
-    namespaced: true
+    namespaced: false
   controller: true
   domain: ihomeland.cn
   group: aitrigram
-  kind: LLMModel
+  kind: ModelRepository
   path: github.com/gaol/AITrigram/api/v1
   version: v1
 version: "3"

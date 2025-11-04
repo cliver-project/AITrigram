@@ -14,10 +14,12 @@ spec:
       kind: LLMEngine
       name: llmengines.aitrigram.ihomeland.cn
       version: v1
-    - description: LLMModel is the Schema for the llmmodels API.
-      displayName: LLMModel
-      kind: LLMModel
-      name: llmmodels.aitrigram.ihomeland.cn
+    - description: |-
+        ModelRepository is the Schema for the modelrepositories API
+        ModelRepository is a cluster wide CRD so that models can be shared across namespaces.
+      displayName: Model Repository
+      kind: ModelRepository
+      name: modelrepositories.aitrigram.ihomeland.cn
       version: v1
   description: The operator to undle AI inference providers
   displayName: aitrigram

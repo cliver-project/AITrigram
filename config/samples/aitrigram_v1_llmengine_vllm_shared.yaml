@@ -1,0 +1,41 @@
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: LLMEngine
+metadata:
+  labels:
+    app.kubernetes.io/name: aitrigram
+    app.kubernetes.io/managed-by: kustomize
+  name: vllm-engine-shared-models
+spec:
+  # the docker image for this LLMEngine
+  engineType: "vllm"
+  servicePort: 8080
+  image: "vllm/vllm-openai:latest"
+  port: 8000
+  modelDeploymentTemplate:
+    downloadImage: "vllm/vllm-openai:latest"
+    downloadScripts: |
+      mkdir -p {{ .ModelDir }} &&
+      cd {{ .ModelDir }} &&
+      python -c "from huggingface_hub import snapshot_download; snapshot_download('{{ .ModelName }}', cache_dir='{{ .ModelDir }}', token=os.getenv('HUGGING_FACE_HUB_TOKEN'))"
+    args:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    storage:
+      modelsStorage:
+        path: "/data/models"
+        persistentVolumeClaim:
+          claimName: shared-models-pvc
+      cacheStorage:
+        path: "/tmp"
+        emptyDir:
+          sizeLimit: 10Gi
+    env:
+      - name: "HF_HOME"
+        value: "/data/models"
+      - name: "HUGGING_FACE_HUB_TOKEN"
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-secret
+            key: token

@@ -1,0 +1,39 @@
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: LLMEngine
+metadata:
+  labels:
+    app.kubernetes.io/name: aitrigram
+    app.kubernetes.io/managed-by: kustomize
+  name: vllm-engine
+  namespace: default
+spec:
+  # Engine type: ollama or vllm
+  engineType: vllm
+
+  # Reference to ModelRepository resources (cluster-scoped)
+  # The engine will automatically mount storage from these repositories
+  modelRefs:
+    - llama3-7b
+
+  # Optional: Custom cache storage (defaults to emptyDir if not specified)
+  cache:
+    path: /cache
+    emptyDir:
+      sizeLimit: 10Gi
+
+  # Optional: Override default image
+  # image: vllm/vllm-openai:v0.4.0
+
+  # Optional: Custom environment variables
+  # env:
+  #   - name: VLLM_WORKER_MULTIPROC_METHOD
+  #     value: spawn
+
+  # Optional: Custom arguments (overrides defaults)
+  # args:
+  #   - --host
+  #   - "0.0.0.0"
+  #   - --port
+  #   - "8000"
+  #   - --model
+  #   - /models/llama3-7b

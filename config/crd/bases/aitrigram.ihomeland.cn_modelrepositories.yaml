@@ -4,32 +4,22 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: llmengines.aitrigram.ihomeland.cn
+  name: modelrepositories.aitrigram.ihomeland.cn
 spec:
   group: aitrigram.ihomeland.cn
   names:
-    kind: LLMEngine
-    listKind: LLMEngineList
-    plural: llmengines
-    singular: llmengine
-  scope: Namespaced
+    kind: ModelRepository
+    listKind: ModelRepositoryList
+    plural: modelrepositories
+    singular: modelrepository
+  scope: Cluster
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .spec.engineType
-      name: Engine
-      type: string
-    - jsonPath: .spec.modelRefs
-      name: Models
-      type: string
-    - jsonPath: .status.phase
-      name: Phase
-      type: string
-    - jsonPath: .metadata.creationTimestamp
-      name: Age
-      type: date
-    name: v1
+  - name: v1
     schema:
       openAPIV3Schema:
+        description: |-
+          ModelRepository is the Schema for the modelrepositories API
+          ModelRepository is a cluster wide CRD so that models can be shared across namespaces.
         properties:
           apiVersion:
             description: |-
@@ -49,16 +39,89 @@ spec:
           metadata:
             type: object
           spec:
-            description: LLMEngineSpec defines the desired state of LLMEngine.
+            description: ModelRepositorySpec defines the desired state of ModelRepository
             properties:
-              args:
-                description: Args specifies arguments to start the engine container.
-                items:
-                  type: string
-                type: array
-              cache:
-                description: Cache specifies the storage configuration for the k-v
-                  cache
+              autoDownload:
+                default: true
+                description: AutoDownload indicates whether to automatically download
+                  the model
+                type: boolean
+              deleteScripts:
+                description: |-
+                  DeleteScripts specifies custom scripts to run for deleting the model when the ModelRepository is deleted
+                  If not specified, default scripts will be used based on the source origin
+                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+                  Can be either bash or Python script (auto-detected)
+                type: string
+              downloadImage:
+                description: |-
+                  DownloadImage specifies the container image to use for downloading the model
+                  If not specified, a default image will be selected based on the source origin
+                type: string
+              downloadScripts:
+                description: |-
+                  DownloadScripts specifies custom scripts to run for downloading the model
+                  If not specified, default scripts will be used based on the source origin
+                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+                  Can be either bash or Python script (auto-detected)
+                type: string
+              modelName:
+                description: |-
+                  ModelName is the identifier within all ModelRepositories in the cluster
+                  If not specified, defaults to metadata.name
+                type: string
+              source:
+                description: Source defines where to download the model from
+                properties:
+                  hfTokenSecretRef:
+                    description: HFTokenSecretRef is specific to huggingface, other
+                      types may have their own way to access the model
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  modelId:
+                    description: ModelId is the identifier of the model within the
+                      origin
+                    type: string
+                  origin:
+                    default: huggingface
+                    description: Origin specifies the source origin (huggingface,
+                      gguf, local, ollama)
+                    enum:
+                    - huggingface
+                    - gguf
+                    - local
+                    - ollama
+                    type: string
+                required:
+                - modelId
+                - origin
+                type: object
+              storage:
+                default:
+                  path: /data/models
+                description: |-
+                  Storage configuration for the model
+                  This defines where and how the model files are stored, the LLMEngine may have different storage than this one, although it has option to reuse this storage.
                 properties:
                   awsElasticBlockStore:
                     description: |-
@@ -1830,169 +1893,17 @@ spec:
                 required:
                 - path
                 type: object
-              engineType:
-                default: vllm
-                description: EngineType specifies the type of LLM engine (e.g., ollama,
-                  vllm).
-                enum:
-                - ollama
-                - vllm
-                type: string
-              env:
-                description: Env specifies environment variables for the engine container.
-                items:
-                  description: EnvVar represents an environment variable present in
-                    a Container.
-                  properties:
-                    name:
-                      description: Name of the environment variable. Must be a C_IDENTIFIER.
-                      type: string
-                    value:
-                      description: |-
-                        Variable references $(VAR_NAME) are expanded
-                        using the previously defined environment variables in the container and
-                        any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
-                      type: string
-                    valueFrom:
-                      description: Source for the environment variable's value. Cannot
-                        be used if value is not empty.
-                      properties:
-                        configMapKeyRef:
-                          description: Selects a key of a ConfigMap.
-                          properties:
-                            key:
-                              description: The key to select.
-                              type: string
-                            name:
-                              default: ""
-                              description: |-
-                                Name of the referent.
-                                This field is effectively required, but due to backwards compatibility is
-                                allowed to be empty. Instances of this type with an empty value here are
-                                almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                              type: string
-                            optional:
-                              description: Specify whether the ConfigMap or its key
-                                must be defined
-                              type: boolean
-                          required:
-                          - key
-                          type: object
-                          x-kubernetes-map-type: atomic
-                        fieldRef:
-                          description: |-
-                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
-                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
-                          properties:
-                            apiVersion:
-                              description: Version of the schema the FieldPath is
-                                written in terms of, defaults to "v1".
-                              type: string
-                            fieldPath:
-                              description: Path of the field to select in the specified
-                                API version.
-                              type: string
-                          required:
-                          - fieldPath
-                          type: object
-                          x-kubernetes-map-type: atomic
-                        resourceFieldRef:
-                          description: |-
-                            Selects a resource of the container: only resources limits and requests
-                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
-                          properties:
-                            containerName:
-                              description: 'Container name: required for volumes,
-                                optional for env vars'
-                              type: string
-                            divisor:
-                              anyOf:
-                              - type: integer
-                              - type: string
-                              description: Specifies the output format of the exposed
-                                resources, defaults to "1"
-                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                              x-kubernetes-int-or-string: true
-                            resource:
-                              description: 'Required: resource to select'
-                              type: string
-                          required:
-                          - resource
-                          type: object
-                          x-kubernetes-map-type: atomic
-                        secretKeyRef:
-                          description: Selects a key of a secret in the pod's namespace
-                          properties:
-                            key:
-                              description: The key of the secret to select from.  Must
-                                be a valid secret key.
-                              type: string
-                            name:
-                              default: ""
-                              description: |-
-                                Name of the referent.
-                                This field is effectively required, but due to backwards compatibility is
-                                allowed to be empty. Instances of this type with an empty value here are
-                                almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                              type: string
-                            optional:
-                              description: Specify whether the Secret or its key must
-                                be defined
-                              type: boolean
-                          required:
-                          - key
-                          type: object
-                          x-kubernetes-map-type: atomic
-                      type: object
-                  required:
-                  - name
-                  type: object
-                type: array
-              image:
-                description: |-
-                  Image specifies the container image to use for the engine.
-                  If not specified, a default image will be selected based on engineType
-                type: string
-              modelRefs:
-                description: |-
-                  ModelRefs lists the ModelRepository names that this engine will serve
-                  The engine will automatically mount storage from these ModelRepositories
-                items:
-                  type: string
-                minItems: 1
-                type: array
-              port:
-                description: Port specifies the HTTP port for the engine inside the
-                  container
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
-              servicePort:
-                description: ServicePort specifies the port for the ClusterIP Service
-                  managed by this engine.
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
             required:
-            - engineType
-            - modelRefs
+            - autoDownload
+            - source
+            - storage
             type: object
           status:
-            description: LLMEngineStatus defines the observed state of LLMEngine.
+            description: ModelRepositoryStatus defines the observed state of ModelRepository
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the LLMEngine's state.
+                  of the ModelRepository's state.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -2056,14 +1967,13 @@ spec:
                 description: Message provides additional information about the current
                   phase
                 type: string
-              modelRepositories:
-                description: ModelRepositories lists the ModelRepository resources
-                  being used
-                items:
-                  type: string
-                type: array
               phase:
-                description: Phase represents the current phase of the LLM engine
+                description: Phase represents the current phase of the model download
+                enum:
+                - pending
+                - downloading
+                - downloaded
+                - failed
                 type: string
               reason:
                 description: Reason provides the reason for the current phase

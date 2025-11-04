@@ -1,0 +1,36 @@
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: LLMEngine
+metadata:
+  labels:
+    app.kubernetes.io/name: aitrigram
+    app.kubernetes.io/managed-by: kustomize
+  name: vllm-engine-preloaded-models
+spec:
+  # the docker image for this LLMEngine
+  engineType: "vllm"
+  servicePort: 8080
+  image: "vllm/vllm-openai:latest"
+  port: 8000
+  modelDeploymentTemplate:
+    args:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    storage:
+      modelsStorage:
+        path: "/data/models"
+        persistentVolumeClaim:
+          claimName: preloaded-models-pvc
+      cacheStorage:
+        path: "/tmp"
+        emptyDir:
+          sizeLimit: 10Gi
+    env:
+      - name: "HF_HOME"
+        value: "/data/models"
+      - name: "HUGGING_FACE_HUB_TOKEN"
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-secret
+            key: token

@@ -1,0 +1,32 @@
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: LLMEngine
+metadata:
+  labels:
+    app.kubernetes.io/name: aitrigram
+    app.kubernetes.io/managed-by: kustomize
+  name: vllm-engine
+spec:
+  # the docker image for this LLMEngine
+  engineType: "vllm"
+  servicePort: 8080
+  image: "vllm/vllm-openai:latest"
+  port: 8000
+  modelDeploymentTemplate:
+    downloadImage: "vllm/vllm-openai:latest"
+    downloadScripts: "mkdir -p {{ .ModelDir }} && cd {{ .ModelDir }} && wget -q -O model.zip \"{{ .ModelUrl }}\" && unzip -q model.zip && rm model.zip"
+    args:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    storage:
+      modelsStorage:
+        path: "/data/models"
+        emptyDir: {}
+      cacheStorage:
+        path: "/tmp"
+        emptyDir:
+          sizeLimit: 10Gi
+    env:
+      - name: "VLLM_MODEL"
+        value: "/data/models/{{ .ModelName }}"

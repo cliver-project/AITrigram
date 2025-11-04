@@ -22,9 +22,6 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the {{ .ProjectName }} itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
-- llmmodel_admin_role.yaml
-- llmmodel_editor_role.yaml
-- llmmodel_viewer_role.yaml
 - llmengine_admin_role.yaml
 - llmengine_editor_role.yaml
 - llmengine_viewer_role.yaml

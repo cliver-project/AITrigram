@@ -3,7 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/aitrigram.ihomeland.cn_llmengines.yaml
-- bases/aitrigram.ihomeland.cn_llmmodels.yaml
+- bases/aitrigram.ihomeland.cn_modelrepositories.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

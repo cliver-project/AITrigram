@@ -1,0 +1,43 @@
+# Example PersistentVolume and PersistentVolumeClaim for shared model storage
+# This is an example of how to set up shared model storage for vLLM models
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: shared-models-pv
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/shared-models
+  # For production, you would use a network storage solution like NFS, Ceph, etc.
+  # nfs:
+  #   server: nfs-server.example.com
+  #   path: "/shared-models"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-models-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  # This PVC will bind to the PV above
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: huggingface-secret
+type: Opaque
+data:
+  token: ""  # Base64 encoded HuggingFace token
+  # Create with: kubectl create secret generic huggingface-secret --from-literal=token=YOUR_HF_TOKEN

@@ -2,7 +2,7 @@
 A kubernetes operator on LLMs serving.
 
 ## Description
-With the operator, users can define their own `LLMEngine` `LLMModel` to k8s cluster to serve the LLM.
+With the operator, users can define their own `LLMEngine` `ModelRepository` to k8s cluster to serve the LLM.
 
 ## Getting Started
 
@@ -37,15 +37,18 @@ spec:
   servicePort: 8080
 ---
 apiVersion: aitrigram.ihomeland.cn/v1
-kind: LLMModel
+kind: ModelRepository
 metadata:
   name: llama3
-  namespace: default
 spec:
-  name: "llama3"
-  engineRef: ollama
-  replicas: 2
-  nameInEngine: "llama3.2:latest"
+  modelName: "llama3"
+  source:
+    type: ollama
+  storage:
+    type: emptyDir
+  supportedEngines:
+    - ollama
+  autoDownload: true
 ```
 Then, you have 2 replicas of Ollama servers which has the `llama3.2:latest` ready for you to access, and it has a service published too at: `ollama-llama3.default.svc.cluster.local:8080` inside the cluster.
 

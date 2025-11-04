@@ -27,19 +27,186 @@ metadata:
         },
         {
           "apiVersion": "aitrigram.ihomeland.cn/v1",
-          "kind": "LLMModel",
+          "kind": "LLMEngine",
           "metadata": {
             "labels": {
               "app.kubernetes.io/managed-by": "kustomize",
               "app.kubernetes.io/name": "aitrigram"
             },
-            "name": "llmmodel-sample"
+            "name": "vllm-engine"
           },
-          "spec": null
+          "spec": {
+            "engineType": "vllm",
+            "image": "vllm/vllm-openai:latest",
+            "modelDeploymentTemplate": {
+              "args": [
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000"
+              ],
+              "downloadImage": "vllm/vllm-openai:latest",
+              "downloadScripts": "mkdir -p {{ .ModelDir }} \u0026\u0026 cd {{ .ModelDir }} \u0026\u0026 wget -q -O model.zip \"{{ .ModelUrl }}\" \u0026\u0026 unzip -q model.zip \u0026\u0026 rm model.zip",
+              "env": [
+                {
+                  "name": "VLLM_MODEL",
+                  "value": "/data/models/{{ .ModelName }}"
+                }
+              ],
+              "storage": {
+                "cacheStorage": {
+                  "emptyDir": {
+                    "sizeLimit": "10Gi"
+                  },
+                  "path": "/tmp"
+                },
+                "modelsStorage": {
+                  "emptyDir": {},
+                  "path": "/data/models"
+                }
+              }
+            },
+            "port": 8000,
+            "servicePort": 8080
+          }
+        },
+        {
+          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "kind": "LLMEngine",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "aitrigram"
+            },
+            "name": "vllm-engine-preloaded-models"
+          },
+          "spec": {
+            "engineType": "vllm",
+            "image": "vllm/vllm-openai:latest",
+            "modelDeploymentTemplate": {
+              "args": [
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000"
+              ],
+              "env": [
+                {
+                  "name": "HF_HOME",
+                  "value": "/data/models"
+                },
+                {
+                  "name": "HUGGING_FACE_HUB_TOKEN",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "token",
+                      "name": "huggingface-secret"
+                    }
+                  }
+                }
+              ],
+              "storage": {
+                "cacheStorage": {
+                  "emptyDir": {
+                    "sizeLimit": "10Gi"
+                  },
+                  "path": "/tmp"
+                },
+                "modelsStorage": {
+                  "path": "/data/models",
+                  "persistentVolumeClaim": {
+                    "claimName": "preloaded-models-pvc"
+                  }
+                }
+              }
+            },
+            "port": 8000,
+            "servicePort": 8080
+          }
+        },
+        {
+          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "kind": "LLMEngine",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "aitrigram"
+            },
+            "name": "vllm-engine-shared-models"
+          },
+          "spec": {
+            "engineType": "vllm",
+            "image": "vllm/vllm-openai:latest",
+            "modelDeploymentTemplate": {
+              "args": [
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000"
+              ],
+              "downloadImage": "vllm/vllm-openai:latest",
+              "downloadScripts": "mkdir -p {{ .ModelDir }} \u0026\u0026\ncd {{ .ModelDir }} \u0026\u0026\npython -c \"from huggingface_hub import snapshot_download; snapshot_download('{{ .ModelName }}', cache_dir='{{ .ModelDir }}', token=os.getenv('HUGGING_FACE_HUB_TOKEN'))\"\n",
+              "env": [
+                {
+                  "name": "HF_HOME",
+                  "value": "/data/models"
+                },
+                {
+                  "name": "HUGGING_FACE_HUB_TOKEN",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "token",
+                      "name": "huggingface-secret"
+                    }
+                  }
+                }
+              ],
+              "storage": {
+                "cacheStorage": {
+                  "emptyDir": {
+                    "sizeLimit": "10Gi"
+                  },
+                  "path": "/tmp"
+                },
+                "modelsStorage": {
+                  "path": "/data/models",
+                  "persistentVolumeClaim": {
+                    "claimName": "shared-models-pvc"
+                  }
+                }
+              }
+            },
+            "port": 8000,
+            "servicePort": 8080
+          }
+        },
+        {
+          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "kind": "ModelRepository",
+          "metadata": {
+            "name": "llama3-7b"
+          },
+          "spec": {
+            "autoDownload": true,
+            "source": {
+              "hfTokenSecretRef": {
+                "key": "token",
+                "name": "huggingface-token"
+              },
+              "modelId": "meta-llama/llama3-7b",
+              "origin": "huggingface"
+            },
+            "storage": {
+              "path": "/models",
+              "persistentVolumeClaim": {
+                "claimName": "vllm-shared-models"
+              }
+            }
+          }
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-06-30T13:01:27Z"
+    createdAt: "2025-11-04T04:39:00Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -52,10 +219,12 @@ spec:
       kind: LLMEngine
       name: llmengines.aitrigram.ihomeland.cn
       version: v1
-    - description: LLMModel is the Schema for the llmmodels API.
-      displayName: LLMModel
-      kind: LLMModel
-      name: llmmodels.aitrigram.ihomeland.cn
+    - description: |-
+        ModelRepository is the Schema for the modelrepositories API
+        ModelRepository is a cluster wide CRD so that models can be shared across namespaces.
+      displayName: Model Repository
+      kind: ModelRepository
+      name: modelrepositories.aitrigram.ihomeland.cn
       version: v1
   description: The operator to undle AI inference providers
   displayName: aitrigram
@@ -76,6 +245,14 @@ spec:
         - apiGroups:
           - ""
           resources:
+          - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - ""
+          resources:
           - services
           verbs:
           - create
@@ -89,7 +266,7 @@ spec:
           - aitrigram.ihomeland.cn
           resources:
           - llmengines
-          - llmmodels
+          - modelrepositories
           verbs:
           - create
           - delete
@@ -102,14 +279,14 @@ spec:
           - aitrigram.ihomeland.cn
           resources:
           - llmengines/finalizers
-          - llmmodels/finalizers
+          - modelrepositories/finalizers
           verbs:
           - update
         - apiGroups:
           - aitrigram.ihomeland.cn
           resources:
           - llmengines/status
-          - llmmodels/status
+          - modelrepositories/status
           verbs:
           - get
           - patch
@@ -118,6 +295,18 @@ spec:
           - apps
           resources:
           - deployments
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - batch
+          resources:
+          - jobs
           verbs:
           - create
           - delete

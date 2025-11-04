@@ -38,11 +38,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
 	"github.com/gaol/AITrigram/internal/controller"
-	webhookv1 "github.com/gaol/AITrigram/internal/webhook/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -86,8 +84,6 @@ type StartOptions struct {
 	Namespace            string
 	PodName              string
 	MetricsAddr          string
-	EnableWebHook        bool
-	CertDir              string
 	probeAddr            string
 	enableLeaderElection bool
 }
@@ -99,11 +95,9 @@ func NewRunCommand() *cobra.Command {
 	}
 
 	opts := StartOptions{
-		Namespace:     "aitrigram-system",
-		PodName:       "operator",
-		MetricsAddr:   "0",
-		EnableWebHook: false,
-		CertDir:       "",
+		Namespace:   "aitrigram-system",
+		PodName:     "operator",
+		MetricsAddr: "0",
 	}
 
 	cmd.Flags().StringVar(&opts.probeAddr, "health-probe-bind-address", ":8081",
@@ -113,8 +107,6 @@ func NewRunCommand() *cobra.Command {
 			"Enabling this will ensure there is only one active controller manager.")
 	cmd.Flags().StringVar(&opts.MetricsAddr, "metrics-bind-address", opts.MetricsAddr,
 		"The address the metric endpoint binds to.")
-	cmd.Flags().StringVar(&opts.CertDir, "cert-dir", opts.CertDir, "Path to the serving key and cert for manager")
-	cmd.Flags().BoolVar(&opts.EnableWebHook, "enable-webhook", false, "If enable the webhook server or not")
 
 	cmd.Run = func(cmd *cobra.Command, args []string) {
 		ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
@@ -156,13 +148,6 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		RenewDeadline:                 &renewDeadline,
 		RetryPeriod:                   &retryPeriod,
 	}
-	if opts.EnableWebHook {
-		log.Info("Webhook server is enabled")
-		ctrlOptions.WebhookServer = webhook.NewServer(webhook.Options{
-			Port:    9443,
-			CertDir: opts.CertDir,
-		})
-	}
 	mgr, err := ctrl.NewManager(kubeConfig, ctrlOptions)
 	if err != nil {
 		return fmt.Errorf("unable to start manager: %w", err)
@@ -178,20 +163,16 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		setupLog.Error(err, "unable to create controller", "controller", "LLMEngine")
 		return err
 	}
-	if err = (&controller.LLMModelReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	// LLMModel controller has been replaced by ModelRepository controller
+	if err = (&controller.ModelRepositoryReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorNamespace: opts.Namespace,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "LLMModel")
+		setupLog.Error(err, "unable to create controller", "controller", "ModelRepository")
 		return err
 	}
 	// +kubebuilder:scaffold:builder
-	if opts.EnableWebHook {
-		if err := webhookv1.SetupLLMEngineWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "controller", "WebHook")
-			return err
-		}
-	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

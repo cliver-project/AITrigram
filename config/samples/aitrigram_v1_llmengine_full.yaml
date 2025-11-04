@@ -31,35 +31,18 @@ spec:
         value: "/models_dir"
 ---
 apiVersion: aitrigram.ihomeland.cn/v1
-kind: LLMModel
+kind: ModelRepository
 metadata:
   labels:
     app.kubernetes.io/name: aitrigram
     app.kubernetes.io/managed-by: kustomize
-  name: llmmodel-sample
+  name: modelrepository-sample
 spec:
-  name: "gemma3-1b-with-cpu"
-  engineRef: ollama-engine-full
-  replicas: 2
-  nameInEngine: "gemma3:1b"
-  resources:
-    requests:
-      cpu: 2Gi
-      memory: 2Gi
-  modelDeployment:
-    downloadImage: "ollama/ollama:latest"
-    downloadScripts: "ollama serve & sleep 10 && ollama pull {{ .ModelName }}"
-    args:
-      - "/bin/ollama"
-      - "serve"
-    storage:
-      cacheDir:
-        path: "/cache"
-        hostPath:
-          path: "/ollama/cache"
-      modelsDir:
-        path: "/models_dir"
-        emptyDir: {}
-    env:
-      - name: "OLLAMA_MODELS"
-        value: "/models_dir"
+  # modelName defaults to metadata.name (modelrepository-sample) if not specified
+  source:
+    origin: ollama
+    modelId: gemma3-1b
+  storage:
+    path: /models
+    emptyDir: {}
+  autoDownload: true

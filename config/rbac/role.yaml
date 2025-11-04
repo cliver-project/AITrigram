@@ -14,6 +14,14 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
   - create
@@ -27,7 +35,7 @@ rules:
   - aitrigram.ihomeland.cn
   resources:
   - llmengines
-  - llmmodels
+  - modelrepositories
   verbs:
   - create
   - delete
@@ -40,14 +48,14 @@ rules:
   - aitrigram.ihomeland.cn
   resources:
   - llmengines/finalizers
-  - llmmodels/finalizers
+  - modelrepositories/finalizers
   verbs:
   - update
 - apiGroups:
   - aitrigram.ihomeland.cn
   resources:
   - llmengines/status
-  - llmmodels/status
+  - modelrepositories/status
   verbs:
   - get
   - patch
@@ -56,6 +64,18 @@ rules:
   - apps
   resources:
   - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
   verbs:
   - create
   - delete
