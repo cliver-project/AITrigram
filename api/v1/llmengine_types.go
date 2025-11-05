@@ -117,6 +117,13 @@ type LLMEngineSpec struct {
 	// If GPU nodes are not available or lack sufficient resources, deployment will fail
 	// +optional
 	GPU *GPUConfig `json:"gpu,omitempty"`
+
+	// HostIPC enables host IPC namespace for the pods
+	// This is often required for GPU workloads (e.g., NVIDIA GPUs) to enable shared memory between processes
+	// WARNING: Enabling this can be a security risk as it allows access to the host's IPC namespace
+	// +kubebuilder:default:=false
+	// +optional
+	HostIPC bool `json:"hostIPC,omitempty"`
 }
 
 // LLMEngineStatus defines the observed state of LLMEngine.

@@ -51,6 +51,7 @@ spec:
   - email: aoingl@gmail.com
     name: lgao
   maturity: alpha
+  minKubeVersion: 1.28.0
   provider:
     name: aitrigram
     url: https://github.com/cliver-project

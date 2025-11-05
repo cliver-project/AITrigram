@@ -206,7 +206,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-11-05T06:45:30Z"
+    createdAt: "2025-11-05T11:06:02Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -447,6 +447,7 @@ spec:
   - email: aoingl@gmail.com
     name: lgao
   maturity: alpha
+  minKubeVersion: 1.28.0
   provider:
     name: aitrigram
     url: https://github.com/cliver-project

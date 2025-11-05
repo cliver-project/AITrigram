@@ -2030,6 +2030,13 @@ spec:
                       Common values: "nvidia.com/gpu", "amd.com/gpu"
                     type: string
                 type: object
+              hostIPC:
+                default: false
+                description: |-
+                  HostIPC enables host IPC namespace for the pods
+                  This is often required for GPU workloads (e.g., NVIDIA GPUs) to enable shared memory between processes
+                  WARNING: Enabling this can be a security risk as it allows access to the host's IPC namespace
+                type: boolean
               image:
                 description: |-
                   Image specifies the container image to use for the engine.

@@ -446,6 +446,7 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{container},
 		Volumes:    volumes,
+		HostIPC:    llmEngine.Spec.HostIPC,
 	}
 
 	// Add GPU node selector and tolerations if GPU is enabled
