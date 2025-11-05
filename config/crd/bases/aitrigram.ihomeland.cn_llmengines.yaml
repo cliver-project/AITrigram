@@ -1956,6 +1956,80 @@ spec:
                   - name
                   type: object
                 type: array
+              gpu:
+                description: |-
+                  GPU specifies GPU resource configuration
+                  When GPU is enabled, pods will request GPU resources and be scheduled on GPU nodes
+                  If GPU nodes are not available or lack sufficient resources, deployment will fail
+                properties:
+                  count:
+                    default: 1
+                    description: Count specifies the number of GPUs to request per
+                      pod
+                    minimum: 1
+                    type: integer
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled indicates whether GPU support is enabled
+                      When enabled, the deployment will request GPU resources and target GPU nodes
+                    type: boolean
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      NodeSelector specifies additional node selector requirements for GPU nodes
+                      These will be merged with the default GPU node selector
+                      Common labels: "nvidia.com/gpu.present=true", "cloud.google.com/gke-accelerator=nvidia-tesla-t4"
+                    type: object
+                  tolerations:
+                    description: |-
+                      Tolerations specifies tolerations for GPU nodes
+                      GPU nodes are often tainted to prevent non-GPU workloads from scheduling
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists and Equal. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                  type:
+                    default: nvidia.com/gpu
+                    description: |-
+                      Type specifies the GPU resource type to request
+                      Common values: "nvidia.com/gpu", "amd.com/gpu"
+                    type: string
+                type: object
               image:
                 description: |-
                   Image specifies the container image to use for the engine.

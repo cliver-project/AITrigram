@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -57,6 +58,7 @@ type LLMEngineReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
@@ -96,6 +98,13 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			msg := fmt.Sprintf("Waiting for ModelRepository %s (phase: %s)", modelRepo.Name, modelRepo.Status.Phase)
 			//TODO maybe trigger the downloading if the autodownload is false
 			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
+		}
+	}
+
+	// Validate GPU availability if GPU is enabled
+	if llmEngine.Spec.GPU != nil && llmEngine.Spec.GPU.Enabled {
+		if err := r.validateGPUAvailability(ctx, llmEngine); err != nil {
+			return r.updateStatus(ctx, llmEngine, "Error", "GPUValidationFailed", err.Error())
 		}
 	}
 
@@ -190,10 +199,111 @@ func (r *LLMEngineReconciler) createOrUpdateDeploymentForModel(ctx context.Conte
 // detectGPUAvailability checks if GPU resources are requested
 // Returns true if GPU resources are requested, false otherwise
 func detectGPUAvailability(llmEngine *aitrigramv1.LLMEngine) bool {
-	// For now, we'll default to GPU mode
-	// TODO: Add resource requests/limits to LLMEngineSpec to detect GPU
-	// or check node labels/annotations
-	return true
+	return llmEngine.Spec.GPU != nil && llmEngine.Spec.GPU.Enabled
+}
+
+// validateGPUAvailability validates that GPU nodes are available in the cluster
+// Returns an error if GPU is required but no suitable nodes are found
+func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
+	logger := log.FromContext(ctx)
+
+	// Get GPU configuration
+	gpuConfig := llmEngine.Spec.GPU
+	if gpuConfig == nil || !gpuConfig.Enabled {
+		return nil
+	}
+
+	// Set default GPU type if not specified
+	gpuType := gpuConfig.Type
+	if gpuType == "" {
+		gpuType = "nvidia.com/gpu"
+	}
+
+	// List all nodes
+	nodeList := &corev1.NodeList{}
+	if err := r.List(ctx, nodeList); err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Find nodes with GPU resources
+	var suitableNodes []string
+	var gpuNodes []string
+	requestedGPUs := gpuConfig.Count
+	if requestedGPUs == 0 {
+		requestedGPUs = 1
+	}
+
+	for _, node := range nodeList.Items {
+		// Check if node has GPU resources
+		gpuCapacity := node.Status.Allocatable[corev1.ResourceName(gpuType)]
+		if gpuCapacity.IsZero() {
+			continue
+		}
+
+		gpuNodes = append(gpuNodes, node.Name)
+
+		// Check if node matches all custom node selector
+		nodeMatches := true
+		if len(gpuConfig.NodeSelector) > 0 {
+			for key, value := range gpuConfig.NodeSelector {
+				if node.Labels[key] != value {
+					nodeMatches = false
+					break
+				}
+			}
+		}
+
+		if !nodeMatches {
+			logger.Info("Node has GPUs but doesn't match node selector",
+				"node", node.Name,
+				"gpuCapacity", gpuCapacity.String(),
+				"nodeSelector", gpuConfig.NodeSelector)
+			continue
+		}
+
+		// Check if node has enough available GPUs
+		availableGPUs := gpuCapacity.Value()
+		if availableGPUs >= int64(requestedGPUs) {
+			suitableNodes = append(suitableNodes, node.Name)
+			logger.Info("Found suitable GPU node",
+				"node", node.Name,
+				"gpuType", gpuType,
+				"availableGPUs", availableGPUs,
+				"requestedGPUs", requestedGPUs)
+		} else {
+			logger.Info("Node has GPUs but not enough capacity",
+				"node", node.Name,
+				"availableGPUs", availableGPUs,
+				"requestedGPUs", requestedGPUs)
+		}
+	}
+
+	// Log results for diagnostics
+	if len(gpuNodes) == 0 {
+		logger.Info("No GPU nodes found in cluster",
+			"gpuType", gpuType,
+			"totalNodes", len(nodeList.Items))
+		return fmt.Errorf("no nodes with GPU resources (%s) found in cluster. Total nodes checked: %d",
+			gpuType, len(nodeList.Items))
+	}
+
+	if len(suitableNodes) == 0 {
+		logger.Info("GPU nodes found but none suitable for deployment",
+			"gpuType", gpuType,
+			"gpuNodes", gpuNodes,
+			"requestedGPUs", requestedGPUs,
+			"nodeSelector", gpuConfig.NodeSelector)
+		return fmt.Errorf("found %d GPU nodes (%v) but none have sufficient resources (need %d GPUs of type %s) or match node selector %v",
+			len(gpuNodes), gpuNodes, requestedGPUs, gpuType, gpuConfig.NodeSelector)
+	}
+
+	logger.Info("GPU validation successful",
+		"suitableNodes", suitableNodes,
+		"totalGPUNodes", len(gpuNodes),
+		"gpuType", gpuType,
+		"requestedGPUs", requestedGPUs)
+
+	return nil
 }
 
 func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) *appsv1.Deployment {
@@ -251,7 +361,7 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 	volumes = append(volumes, cacheVolumes...)
 
 	// Detect GPU availability
-	hasGPU := detectGPUAvailability(llmEngine)
+	requestGPU := detectGPUAvailability(llmEngine)
 
 	// Build model path using production-ready paths
 	modelPath := fmt.Sprintf("%s/%s", storagePaths.ModelPath, modelRepo.Name)
@@ -263,7 +373,7 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 		case aitrigramv1.LLMEngineTypeOllama:
 			args = buildOllamaArgs()
 		case aitrigramv1.LLMEngineTypeVLLM:
-			args = buildVLLMArgs(modelPath, port, hasGPU)
+			args = buildVLLMArgs(modelPath, port, requestGPU)
 		}
 	}
 
@@ -271,15 +381,111 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 	var containerEnv []corev1.EnvVar
 	switch llmEngine.Spec.EngineType {
 	case aitrigramv1.LLMEngineTypeOllama:
-		containerEnv = buildOllamaEnv(hasGPU, llmEngine.Spec.Env)
+		containerEnv = buildOllamaEnv(requestGPU, llmEngine.Spec.Env)
 	case aitrigramv1.LLMEngineTypeVLLM:
-		containerEnv = buildVLLMEnv(hasGPU, llmEngine.Spec.Env)
+		containerEnv = buildVLLMEnv(requestGPU, llmEngine.Spec.Env)
 	default:
-		containerEnv = buildVLLMEnv(hasGPU, llmEngine.Spec.Env)
+		containerEnv = buildVLLMEnv(requestGPU, llmEngine.Spec.Env)
 	}
 
 	// Generate unique name for this deployment (engine-name + model-name)
 	deploymentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+
+	// Build container with GPU resources if enabled
+	container := corev1.Container{
+		Name:  "llm-engine",
+		Image: image,
+		Args:  args,
+		Env:   containerEnv,
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "http",
+				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		VolumeMounts: volumeMounts,
+	}
+
+	// Add GPU resources and security context if GPU is enabled
+	if requestGPU {
+		gpuConfig := llmEngine.Spec.GPU
+		gpuType := gpuConfig.Type
+		if gpuType == "" {
+			gpuType = "nvidia.com/gpu"
+		}
+
+		gpuCount := gpuConfig.Count
+		if gpuCount == 0 {
+			gpuCount = 1
+		}
+
+		// Set resource requests and limits for GPU
+		container.Resources = corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceName(gpuType): *resource.NewQuantity(int64(gpuCount), resource.DecimalSI),
+			},
+			Requests: corev1.ResourceList{
+				corev1.ResourceName(gpuType): *resource.NewQuantity(int64(gpuCount), resource.DecimalSI),
+			},
+		}
+
+		// Add security context for GPU access
+		// NVIDIA GPUs require access to device files
+		privileged := false
+		container.SecurityContext = &corev1.SecurityContext{
+			Privileged: &privileged,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{
+					"SYS_ADMIN", // Required for some GPU operations
+				},
+			},
+		}
+	}
+
+	// Build pod spec with node selector and tolerations for GPU
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{container},
+		Volumes:    volumes,
+	}
+
+	// Add GPU node selector and tolerations if GPU is enabled
+	if requestGPU {
+		gpuConfig := llmEngine.Spec.GPU
+
+		// Build node selector - start with user-provided selectors
+		nodeSelector := make(map[string]string)
+		if len(gpuConfig.NodeSelector) > 0 {
+			for k, v := range gpuConfig.NodeSelector {
+				nodeSelector[k] = v
+			}
+		}
+
+		// Add default GPU label if not already specified by user
+		defaultNodeSelector := getDefaultGPUNodeSelector(gpuConfig.Type)
+		if defaultNodeSelector != nil {
+			for k, v := range defaultNodeSelector {
+				if _, exists := nodeSelector[k]; !exists {
+					nodeSelector[k] = v
+				}
+			}
+		}
+
+		if len(nodeSelector) > 0 {
+			podSpec.NodeSelector = nodeSelector
+		}
+
+		// Add tolerations for GPU nodes (GPU nodes are often tainted)
+		if len(gpuConfig.Tolerations) > 0 {
+			podSpec.Tolerations = gpuConfig.Tolerations
+		} else {
+			// Add default GPU tolerations if none specified
+			defaultTolerations := getDefaultGPUTolerations(gpuConfig.Type)
+			if defaultTolerations != nil {
+				podSpec.Tolerations = defaultTolerations
+			}
+		}
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -307,25 +513,7 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 						"engine-type": string(llmEngine.Spec.EngineType),
 					},
 				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "llm-engine",
-							Image: image,
-							Args:  args,
-							Env:   containerEnv,
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: port,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							VolumeMounts: volumeMounts,
-						},
-					},
-					Volumes: volumes,
-				},
+				Spec: podSpec,
 			},
 		},
 	}

@@ -31,6 +31,38 @@ const (
 	LLMEngineTypeVLLM LLMEngineType = "vllm"
 )
 
+// GPUConfig defines GPU resource configuration for LLMEngine
+type GPUConfig struct {
+	// Enabled indicates whether GPU support is enabled
+	// When enabled, the deployment will request GPU resources and target GPU nodes
+	// +kubebuilder:default:=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Count specifies the number of GPUs to request per pod
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default:=1
+	// +optional
+	Count int `json:"count,omitempty"`
+
+	// Type specifies the GPU resource type to request
+	// Common values: "nvidia.com/gpu", "amd.com/gpu"
+	// +kubebuilder:default:="nvidia.com/gpu"
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// NodeSelector specifies additional node selector requirements for GPU nodes
+	// These will be merged with the default GPU node selector
+	// Common labels: "nvidia.com/gpu.present=true", "cloud.google.com/gke-accelerator=nvidia-tesla-t4"
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations specifies tolerations for GPU nodes
+	// GPU nodes are often tainted to prevent non-GPU workloads from scheduling
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+}
+
 // LLMEngineSpec defines the desired state of LLMEngine.
 type LLMEngineSpec struct {
 	// EngineType specifies the type of LLM engine (e.g., ollama, vllm).
@@ -79,6 +111,12 @@ type LLMEngineSpec struct {
 	// +kubebuilder:default:=1
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// GPU specifies GPU resource configuration
+	// When GPU is enabled, pods will request GPU resources and be scheduled on GPU nodes
+	// If GPU nodes are not available or lack sufficient resources, deployment will fail
+	// +optional
+	GPU *GPUConfig `json:"gpu,omitempty"`
 }
 
 // LLMEngineStatus defines the observed state of LLMEngine.

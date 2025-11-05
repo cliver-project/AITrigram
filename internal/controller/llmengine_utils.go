@@ -432,3 +432,61 @@ fi
 `
 	}
 }
+
+// getDefaultGPUNodeSelector returns the default node selector based on GPU type
+// Returns nil if no default selector should be applied
+func getDefaultGPUNodeSelector(gpuType string) map[string]string {
+	if gpuType == "" {
+		gpuType = "nvidia.com/gpu"
+	}
+
+	switch gpuType {
+	case "nvidia.com/gpu":
+		// For NVIDIA GPUs, use the common gpu.present label
+		return map[string]string{
+			"nvidia.com/gpu.present": "true",
+		}
+	case "amd.com/gpu":
+		// For AMD GPUs, use AMD-specific label
+		return map[string]string{
+			"amd.com/gpu.present": "true",
+		}
+	default:
+		// For other GPU types, don't set a default selector
+		// Users should specify their own node selector
+		return nil
+	}
+}
+
+// getDefaultGPUTolerations returns the default tolerations based on GPU type
+// Returns nil if no default tolerations should be applied
+func getDefaultGPUTolerations(gpuType string) []corev1.Toleration {
+	if gpuType == "" {
+		gpuType = "nvidia.com/gpu"
+	}
+
+	switch gpuType {
+	case "nvidia.com/gpu":
+		// Common NVIDIA GPU toleration
+		return []corev1.Toleration{
+			{
+				Key:      "nvidia.com/gpu",
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		}
+	case "amd.com/gpu":
+		// Common AMD GPU toleration
+		return []corev1.Toleration{
+			{
+				Key:      "amd.com/gpu",
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		}
+	default:
+		// For other GPU types, don't set default tolerations
+		// Users should specify their own tolerations
+		return nil
+	}
+}
