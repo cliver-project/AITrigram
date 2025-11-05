@@ -39,7 +39,7 @@ var (
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "ghcr.io/gaol/aitrigram-controller:v0.0.1"
+	projectImage = "ghcr.io/cliver-project/aitrigram-controller:latest"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,

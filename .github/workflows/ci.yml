@@ -73,5 +73,5 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/gaol/aitrigram-controller:latest
-            ghcr.io/gaol/aitrigram-controller:${{ github.sha }}
+            ghcr.io/cliver-project/aitrigram-controller:latest
+            ghcr.io/cliver-project/aitrigram-controller:${{ github.sha }}

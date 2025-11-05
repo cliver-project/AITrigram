@@ -46,6 +46,13 @@ spec:
                 description: AutoDownload indicates whether to automatically download
                   the model
                 type: boolean
+              deleteScripts:
+                description: |-
+                  DeleteScripts specifies custom scripts to run for deleting the model when the ModelRepository is deleted
+                  If not specified, default scripts will be used based on the source origin
+                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+                  Can be either bash or Python script (auto-detected)
+                type: string
               downloadImage:
                 description: |-
                   DownloadImage specifies the container image to use for downloading the model
@@ -55,7 +62,8 @@ spec:
                 description: |-
                   DownloadScripts specifies custom scripts to run for downloading the model
                   If not specified, default scripts will be used based on the source origin
-                  Supports template variables: {{ .ModelId }}, {{ .ModelName }}, {{ .MountPath }}
+                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+                  Can be either bash or Python script (auto-detected)
                 type: string
               modelName:
                 description: |-
