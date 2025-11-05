@@ -39,8 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
-	"github.com/gaol/AITrigram/internal/controller"
+	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
+	"github.com/cliver-project/AITrigram/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

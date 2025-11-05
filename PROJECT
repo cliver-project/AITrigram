@@ -9,7 +9,7 @@ plugins:
   manifests.sdk.operatorframework.io/v2: {}
   scorecard.sdk.operatorframework.io/v2: {}
 projectName: aitrigram
-repo: github.com/gaol/AITrigram
+repo: github.com/cliver-project/AITrigram
 resources:
 - api:
     crdVersion: v1
@@ -18,7 +18,7 @@ resources:
   domain: ihomeland.cn
   group: aitrigram
   kind: LLMEngine
-  path: github.com/gaol/AITrigram/api/v1
+  path: github.com/cliver-project/AITrigram/api/v1
   version: v1
 - api:
     crdVersion: v1
@@ -27,6 +27,6 @@ resources:
   domain: ihomeland.cn
   group: aitrigram
   kind: ModelRepository
-  path: github.com/gaol/AITrigram/api/v1
+  path: github.com/cliver-project/AITrigram/api/v1
   version: v1
 version: "3"

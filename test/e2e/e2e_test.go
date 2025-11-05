@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/gaol/AITrigram/test/utils"
+	"github.com/cliver-project/AITrigram/test/utils"
 )
 
 // namespace where the project is deployed in

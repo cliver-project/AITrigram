@@ -21,7 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
+	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 )
 
 // Production-ready storage paths for different model origins and cache types

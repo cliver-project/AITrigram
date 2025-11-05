@@ -20,7 +20,7 @@ Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
 the project, i.e.:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/gaol/AITrigram/main/dist/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/cliver-project/AITrigram/main/dist/install.yaml
 ```
 
 ### Deploy LLM Servings

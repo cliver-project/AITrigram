@@ -53,5 +53,5 @@ spec:
   maturity: alpha
   provider:
     name: aitrigram
-    url: https://github.com/gaol
+    url: https://github.com/cliver-project
   version: 0.0.0

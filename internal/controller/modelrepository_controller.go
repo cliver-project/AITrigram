@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aitrigramv1 "github.com/gaol/AITrigram/api/v1"
+	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 )
 
 const (
