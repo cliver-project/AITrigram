@@ -5,20 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Operator (Local)",
-            "type": "go",
-            "request": "launch",
-            "mode": "debug",
-            "console": "integratedTerminal",
-            "program": "${workspaceFolder}/cmd/main.go",
-            "args": [],
-            "env": {
-                "KUBECONFIG": "${env:HOME}/.kube/config"
-            },
-            "showLog": true,
-            "trace": "verbose"
-        },
-        {
             "name": "Debug Operator (Verbose Logging)",
             "type": "go",
             "request": "launch",
@@ -26,28 +12,10 @@
             "console": "integratedTerminal",
             "program": "${workspaceFolder}/cmd/main.go",
             "args": [
-                "--zap-log-level=debug",
-                "--zap-devel=true"
+                "run"
             ],
             "env": {
                 "KUBECONFIG": "${env:HOME}/.kube/config"
-            },
-            "showLog": true,
-            "trace": "verbose"
-        },
-        {
-            "name": "Debug Operator (Specific Namespace)",
-            "type": "go",
-            "request": "launch",
-            "mode": "debug",
-            "console": "integratedTerminal",
-            "program": "${workspaceFolder}/cmd/main.go",
-            "args": [
-                "--zap-log-level=debug"
-            ],
-            "env": {
-                "KUBECONFIG": "${env:HOME}/.kube/config",
-                "WATCH_NAMESPACE": "default"  // Change to your namespace
             },
             "showLog": true,
             "trace": "verbose"

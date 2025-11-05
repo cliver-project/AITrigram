@@ -98,6 +98,8 @@ func NewRunCommand() *cobra.Command {
 		MetricsAddr: "0",
 	}
 
+	cmd.Flags().StringVar(&opts.Namespace, "namespace", opts.Namespace,
+		"The namespace where the operator creates Jobs and other resources.")
 	cmd.Flags().StringVar(&opts.probeAddr, "health-probe-bind-address", ":8081",
 		"The address the probe endpoint binds to.")
 	cmd.Flags().BoolVar(&opts.enableLeaderElection, "leader-elect", false,
