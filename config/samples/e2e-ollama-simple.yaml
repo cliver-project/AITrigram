@@ -1,0 +1,30 @@
+---
+# Simple e2e test sample for Ollama with llama3.2:latest
+# This is the minimal configuration for testing Ollama LLMEngine
+
+# Step 1: Create ModelRepository for llama3.2:latest
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: ModelRepository
+metadata:
+  name: llama3-2-e2e
+spec:
+  source:
+    origin: ollama
+    modelId: llama3.2:latest
+  storage:
+    path: /root/.ollama/models
+    emptyDir: {}
+  autoDownload: true
+
+---
+# Step 2: Create LLMEngine for Ollama
+apiVersion: aitrigram.ihomeland.cn/v1
+kind: LLMEngine
+metadata:
+  name: ollama-e2e
+spec:
+  engineType: ollama
+  modelRefs:
+    - llama3-2-e2e
+  replicas: 1
+  servicePort: 11434
