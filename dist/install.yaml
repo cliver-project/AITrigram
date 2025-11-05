@@ -4484,6 +4484,7 @@ spec:
         command:
         - /manager
         image: ghcr.io/cliver-project/aitrigram-controller:latest
+        imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
             path: /healthz

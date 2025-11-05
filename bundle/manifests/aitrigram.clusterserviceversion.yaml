@@ -206,7 +206,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-11-05T02:59:05Z"
+    createdAt: "2025-11-05T06:45:30Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -359,6 +359,7 @@ spec:
                 command:
                 - /manager
                 image: ghcr.io/cliver-project/aitrigram-controller:latest
+                imagePullPolicy: IfNotPresent
                 livenessProbe:
                   httpGet:
                     path: /healthz

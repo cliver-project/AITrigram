@@ -275,6 +275,12 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &[]bool{true}[0],
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "model-downloader",
@@ -283,6 +289,16 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 							Env:             envVars,
 							VolumeMounts:    volumeMounts,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: &[]bool{false}[0],
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								RunAsNonRoot: &[]bool{true}[0],
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeRuntimeDefault,
+								},
+							},
 						},
 					},
 					Volumes:       volumes,
@@ -399,6 +415,12 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 			TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(1800), // 30 minutes
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &[]bool{true}[0],
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "cleanup",
@@ -406,6 +428,16 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 							Args:            args,
 							VolumeMounts:    volumeMounts,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: &[]bool{false}[0],
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								RunAsNonRoot: &[]bool{true}[0],
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeRuntimeDefault,
+								},
+							},
 						},
 					},
 					Volumes:       volumes,

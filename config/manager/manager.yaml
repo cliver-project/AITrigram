@@ -65,6 +65,7 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: ghcr.io/cliver-project/aitrigram-controller:latest
+        imagePullPolicy: IfNotPresent
         name: manager
         ports: []
         securityContext:
