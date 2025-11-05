@@ -48,7 +48,6 @@ type LLMEngineReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	OperatorNamespace string
-	OperatorPodName   string
 }
 
 // +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=llmengines,verbs=get;list;watch;create;update;patch;delete

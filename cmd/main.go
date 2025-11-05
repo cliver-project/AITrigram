@@ -82,7 +82,6 @@ func main() {
 
 type StartOptions struct {
 	Namespace            string
-	PodName              string
 	MetricsAddr          string
 	probeAddr            string
 	enableLeaderElection bool
@@ -96,7 +95,6 @@ func NewRunCommand() *cobra.Command {
 
 	opts := StartOptions{
 		Namespace:   "aitrigram-system",
-		PodName:     "operator",
 		MetricsAddr: "0",
 	}
 
@@ -124,7 +122,7 @@ func NewRunCommand() *cobra.Command {
 func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 	log.Info("Starting llmengine-operator", "version", version)
 	kubeConfig := ctrl.GetConfigOrDie()
-	kubeConfig.UserAgent = opts.PodName
+	kubeConfig.UserAgent = "aitrigram-controller"
 	leaseDuration := time.Second * 60
 	renewDeadline := time.Second * 40
 	retryPeriod := time.Second * 15
@@ -157,7 +155,6 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: opts.Namespace,
-		OperatorPodName:   opts.PodName,
 	}
 	if err = llmEngineReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LLMEngine")

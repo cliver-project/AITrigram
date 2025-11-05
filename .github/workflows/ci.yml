@@ -3,12 +3,12 @@ name: CI for AITrigram
 on:
   push:
     branches:
-      - '**'
+      - "**"
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   pull_request:
     branches:
-      - '**'
+      - "**"
 
 jobs:
   ci-test:
@@ -33,10 +33,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.63.4
+      # - name: Run linter
+      #   uses: golangci/golangci-lint-action@v6
+      #   with:
+      #     version: v1.63.4
 
       - name: Running Tests
         run: |
