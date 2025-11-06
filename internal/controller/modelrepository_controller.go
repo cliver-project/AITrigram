@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -101,11 +102,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		// Update status to downloading
-		modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseDownloading
-		modelRepo.Status.Reason = "StartingDownload"
-		modelRepo.Status.Message = "Starting model download process"
-		modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-		if err := r.Status().Update(ctx, modelRepo); err != nil {
+		if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseDownloading, "StartingDownload", "Starting model download process"); err != nil {
 			logger.Error(err, "Failed to update ModelRepository status")
 			return ctrl.Result{}, err
 		}
@@ -114,11 +111,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		job, err := r.createDownloadJob(ctx, modelRepo)
 		if err != nil {
 			logger.Error(err, "Failed to create download job")
-			modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseFailed
-			modelRepo.Status.Reason = "JobCreationFailed"
-			modelRepo.Status.Message = fmt.Sprintf("Failed to create download job: %v", err)
-			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-			_ = r.Status().Update(ctx, modelRepo)
+			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed, "JobCreationFailed", fmt.Sprintf("Failed to create download job: %v", err))
 			return ctrl.Result{}, err
 		}
 
@@ -130,11 +123,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// Create the job
 		if err := r.Create(ctx, job); err != nil && !errors.IsAlreadyExists(err) {
 			logger.Error(err, "Failed to create download job")
-			modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseFailed
-			modelRepo.Status.Reason = "JobCreationFailed"
-			modelRepo.Status.Message = fmt.Sprintf("Failed to create download job: %v", err)
-			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-			_ = r.Status().Update(ctx, modelRepo)
+			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed, "JobCreationFailed", fmt.Sprintf("Failed to create download job: %v", err))
 			return ctrl.Result{}, err
 		}
 	} else if modelRepo.Spec.AutoDownload && modelRepo.Status.Phase == aitrigramv1.ModelRepositoryPhaseDownloading {
@@ -150,29 +139,17 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				return ctrl.Result{}, err
 			}
 			// Job not found, reset status
-			modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhasePending
-			modelRepo.Status.Reason = "JobNotFound"
-			modelRepo.Status.Message = "Download job not found, resetting to pending"
-			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-			_ = r.Status().Update(ctx, modelRepo)
+			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhasePending, "JobNotFound", "Download job not found, resetting to pending")
 			return ctrl.Result{RequeueAfter: time.Second * 60}, nil
 		}
 
 		// Check job completion
 		if job.Status.Succeeded > 0 {
-			modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseDownloaded
-			modelRepo.Status.Reason = "Success"
-			modelRepo.Status.Message = "Model successfully downloaded"
-			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-			if err := r.Status().Update(ctx, modelRepo); err != nil {
+			if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseDownloaded, "Success", "Model successfully downloaded"); err != nil {
 				return ctrl.Result{}, err
 			}
 		} else if job.Status.Failed > 0 {
-			modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseFailed
-			modelRepo.Status.Reason = "DownloadFailed"
-			modelRepo.Status.Message = "Model download failed"
-			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-			if err := r.Status().Update(ctx, modelRepo); err != nil {
+			if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed, "DownloadFailed", "Model download failed"); err != nil {
 				return ctrl.Result{}, err
 			}
 			// Requeue to retry
@@ -269,9 +246,7 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 		logger.Info("Blocking ModelRepository deletion", "reason", msg)
 
 		// Update status to inform the user
-		modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseFailed
-		modelRepo.Status.Message = msg
-		if err := r.Status().Update(ctx, modelRepo); err != nil {
+		if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed, "DeletionBlocked", msg); err != nil {
 			logger.Error(err, "Failed to update status")
 		}
 
@@ -289,9 +264,19 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 		// to avoid blocking deletion, but log the error
 	}
 
-	// Remove finalizer
-	controllerutil.RemoveFinalizer(modelRepo, ModelRepositoryFinalizer)
-	return r.Update(ctx, modelRepo)
+	// Remove finalizer with retry to handle conflicts
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy
+		key := client.ObjectKeyFromObject(modelRepo)
+		fresh := &aitrigramv1.ModelRepository{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
+
+		// Remove finalizer from fresh copy
+		controllerutil.RemoveFinalizer(fresh, ModelRepositoryFinalizer)
+		return r.Update(ctx, fresh)
+	})
 }
 
 func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
@@ -354,6 +339,26 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 
 	// Create the cleanup job (don't set owner reference as the owner is being deleted)
 	return r.Create(ctx, job)
+}
+
+// updateModelRepoStatus updates the ModelRepository status with retry logic to handle conflicts
+func (r *ModelRepositoryReconciler) updateModelRepoStatus(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, phase aitrigramv1.ModelRepositoryPhase, reason, message string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the resource
+		key := client.ObjectKeyFromObject(modelRepo)
+		fresh := &aitrigramv1.ModelRepository{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
+
+		// Update status on the fresh copy
+		fresh.Status.Phase = phase
+		fresh.Status.Reason = reason
+		fresh.Status.Message = message
+		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
+
+		return r.Status().Update(ctx, fresh)
+	})
 }
 
 func (r *ModelRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {

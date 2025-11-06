@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -442,12 +443,25 @@ func (r *LLMEngineReconciler) createOrUpdateServiceForModel(ctx context.Context,
 }
 
 func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, phase, reason, message string) (ctrl.Result, error) {
-	llmEngine.Status.Phase = phase
-	llmEngine.Status.Reason = reason
-	llmEngine.Status.Message = message
-	llmEngine.Status.LastUpdated = &metav1.Time{Time: time.Now()}
+	// Use retry logic to handle conflicts when multiple reconcile loops update status
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the resource
+		key := client.ObjectKeyFromObject(llmEngine)
+		fresh := &aitrigramv1.LLMEngine{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
 
-	if err := r.Status().Update(ctx, llmEngine); err != nil {
+		// Update status on the fresh copy
+		fresh.Status.Phase = phase
+		fresh.Status.Reason = reason
+		fresh.Status.Message = message
+		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
+
+		return r.Status().Update(ctx, fresh)
+	})
+
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -460,9 +474,19 @@ func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitri
 }
 
 func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
-	// Remove finalizer
-	controllerutil.RemoveFinalizer(llmEngine, LLMEngineFinalizer)
-	return r.Update(ctx, llmEngine)
+	// Remove finalizer with retry to handle conflicts
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy
+		key := client.ObjectKeyFromObject(llmEngine)
+		fresh := &aitrigramv1.LLMEngine{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
+
+		// Remove finalizer from fresh copy
+		controllerutil.RemoveFinalizer(fresh, LLMEngineFinalizer)
+		return r.Update(ctx, fresh)
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
