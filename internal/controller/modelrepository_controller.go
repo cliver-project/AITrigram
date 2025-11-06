@@ -216,6 +216,7 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 						{
 							Name:            "model-downloader",
 							Image:           workload.DownloadImage,
+							Command:         workload.DownloadCommand,
 							Args:            workload.DownloadArgs,
 							Env:             workload.Envs,
 							VolumeMounts:    workload.Storage.VolumeMounts,
@@ -328,6 +329,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 						{
 							Name:            "cleanup",
 							Image:           workload.CleanupImage,
+							Command:         workload.CleanupCommand,
 							Args:            workload.CleanupArgs,
 							VolumeMounts:    workload.Storage.VolumeMounts,
 							ImagePullPolicy: corev1.PullIfNotPresent,

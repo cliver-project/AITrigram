@@ -343,8 +343,8 @@ func buildDefaultDownloadScript(origin aitrigramv1.ModelOrigin) string {
 	case aitrigramv1.ModelOriginOllama:
 		// Bash script using ollama
 		// Note: ollama pull requires the ollama server to be running
-		return `#!/bin/sh
-set -e
+		return `
+set -ex
 
 # Start ollama server in the background
 echo "Starting ollama server..."
@@ -380,7 +380,7 @@ echo "Model is stored in OLLAMA_MODELS directory"
 `
 	case aitrigramv1.ModelOriginGGUF:
 		// Bash script using curl
-		return `#!/bin/sh
+		return `
 set -e
 echo "Downloading GGUF model {{ ModelId }} to {{ MountPath }}/{{ ModelName }}..."
 mkdir -p {{ MountPath }}/{{ ModelName }}
@@ -389,7 +389,7 @@ echo "Download completed successfully"
 `
 	case aitrigramv1.ModelOriginLocal:
 		// Simple bash script for local models
-		return `#!/bin/sh
+		return `
 echo "Local model source - no download needed"
 echo "Model should already be available at {{ MountPath }}"
 ls -la {{ MountPath }}
@@ -405,7 +405,7 @@ func buildDefaultDeleteScript(origin aitrigramv1.ModelOrigin) string {
 	switch origin {
 	case aitrigramv1.ModelOriginHuggingFace:
 		// Bash script to remove HuggingFace model directory
-		return `#!/bin/sh
+		return `
 set -e
 echo "Deleting HuggingFace model {{ ModelName }} from {{ MountPath }}..."
 if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
@@ -417,8 +417,8 @@ fi
 `
 	case aitrigramv1.ModelOriginOllama:
 		// Bash script using ollama rm command
-		return `#!/bin/sh
-set -e
+		return `
+set -ex
 echo "Deleting Ollama model {{ ModelId }}..."
 if ollama list | grep -q "{{ ModelId }}"; then
   ollama rm {{ ModelId }}
@@ -436,7 +436,7 @@ fi
 `
 	case aitrigramv1.ModelOriginGGUF:
 		// Bash script to remove GGUF model directory
-		return `#!/bin/sh
+		return `
 set -e
 echo "Deleting GGUF model {{ ModelName }} from {{ MountPath }}..."
 if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
@@ -448,14 +448,14 @@ fi
 `
 	case aitrigramv1.ModelOriginLocal:
 		// For local models, just log - don't delete by default
-		return `#!/bin/sh
+		return `
 echo "Local model source - skipping deletion of {{ MountPath }}/{{ ModelName }}"
 echo "If you want to delete local models, provide custom deleteScripts"
 ls -la {{ MountPath }} || true
 `
 	default:
 		// Default to removing directory
-		return `#!/bin/sh
+		return `
 set -e
 echo "Deleting model {{ ModelName }} from {{ MountPath }}..."
 if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then

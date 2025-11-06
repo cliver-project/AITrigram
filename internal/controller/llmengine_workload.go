@@ -49,10 +49,20 @@ type ModelRepositoryWorkload struct {
 	// Envs contains environment variables for download/cleanup jobs
 	Envs []corev1.EnvVar
 
+	// DownloadCommand overrides the container's ENTRYPOINT for download job
+	// If empty, uses the container's default ENTRYPOINT
+	DownloadCommand []string
+
 	// DownloadArgs are the command arguments to execute the download script
+	// These override the container's CMD or are passed to ENTRYPOINT
 	DownloadArgs []string
 
+	// CleanupCommand overrides the container's ENTRYPOINT for cleanup job
+	// If empty, uses the container's default ENTRYPOINT
+	CleanupCommand []string
+
 	// CleanupArgs are the command arguments to execute the cleanup script
+	// These override the container's CMD or are passed to ENTRYPOINT
 	CleanupArgs []string
 }
 
@@ -211,26 +221,33 @@ func BuildModelRepositoryWorkload(modelRepo *aitrigramv1.ModelRepository) (*Mode
 	}
 	workload.Envs = envVars
 
-	// Build download args based on script type
+	// Build download command and args based on script type
+	// We override the container's ENTRYPOINT with Command and pass the script via Args
 	downloadScriptType := DetectScriptType(downloadScript)
 	switch downloadScriptType {
 	case ScriptTypePython:
-		workload.DownloadArgs = []string{"python3", "-c", downloadScript}
+		workload.DownloadCommand = []string{"python3"}
+		workload.DownloadArgs = []string{"-c", downloadScript}
 	case ScriptTypeBash:
-		workload.DownloadArgs = []string{"/bin/sh", "-c", downloadScript}
+		workload.DownloadCommand = []string{"/bin/sh"}
+		workload.DownloadArgs = []string{"-c", downloadScript}
 	default:
-		workload.DownloadArgs = []string{"/bin/sh", "-c", downloadScript}
+		workload.DownloadCommand = []string{"/bin/sh"}
+		workload.DownloadArgs = []string{"-c", downloadScript}
 	}
 
-	// Build cleanup args based on script type
+	// Build cleanup command and args based on script type
 	cleanupScriptType := DetectScriptType(cleanupScript)
 	switch cleanupScriptType {
 	case ScriptTypePython:
-		workload.CleanupArgs = []string{"python3", "-c", cleanupScript}
+		workload.CleanupCommand = []string{"python3"}
+		workload.CleanupArgs = []string{"-c", cleanupScript}
 	case ScriptTypeBash:
-		workload.CleanupArgs = []string{"/bin/sh", "-c", cleanupScript}
+		workload.CleanupCommand = []string{"/bin/sh"}
+		workload.CleanupArgs = []string{"-c", cleanupScript}
 	default:
-		workload.CleanupArgs = []string{"/bin/sh", "-c", cleanupScript}
+		workload.CleanupCommand = []string{"/bin/sh"}
+		workload.CleanupArgs = []string{"-c", cleanupScript}
 	}
 
 	return workload, nil

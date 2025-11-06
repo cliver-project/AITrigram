@@ -104,22 +104,29 @@ func TestBuildModelRepositoryWorkload_HuggingFace_Default(t *testing.T) {
 		t.Errorf("MountPath = %v, want /data/models", workload.Storage.VolumeMounts[0].MountPath)
 	}
 
-	// Verify download args (should be python3)
-	expectedArgs := []string{"python3", "-c", workload.DownloadScript}
+	// Verify download command and args (should be python3)
+	expectedCommand := []string{"python3"}
+	if diff := cmp.Diff(expectedCommand, workload.DownloadCommand); diff != "" {
+		t.Errorf("DownloadCommand mismatch (-want +got):\n%s", diff)
+	}
+	expectedArgs := []string{"-c", workload.DownloadScript}
 	if diff := cmp.Diff(expectedArgs, workload.DownloadArgs); diff != "" {
 		t.Errorf("DownloadArgs mismatch (-want +got):\n%s", diff)
 	}
 
-	// Verify cleanup args (should be bash for HuggingFace)
-	if len(workload.CleanupArgs) < 3 {
-		t.Fatal("CleanupArgs should have at least 3 elements")
+	// Verify cleanup command and args (should be bash for HuggingFace)
+	if len(workload.CleanupCommand) == 0 {
+		t.Fatal("CleanupCommand should not be empty")
 	}
 	// HuggingFace cleanup script is bash (#!/bin/sh)
-	if workload.CleanupArgs[0] != "/bin/sh" && workload.CleanupArgs[0] != "python3" {
-		t.Errorf("CleanupArgs[0] should be /bin/sh or python3, got %v", workload.CleanupArgs[0])
+	if workload.CleanupCommand[0] != "/bin/sh" && workload.CleanupCommand[0] != "python3" {
+		t.Errorf("CleanupCommand[0] should be /bin/sh or python3, got %v", workload.CleanupCommand[0])
 	}
-	if workload.CleanupArgs[1] != "-c" {
-		t.Errorf("CleanupArgs[1] should be -c, got %v", workload.CleanupArgs[1])
+	if len(workload.CleanupArgs) < 2 {
+		t.Fatal("CleanupArgs should have at least 2 elements")
+	}
+	if workload.CleanupArgs[0] != "-c" {
+		t.Errorf("CleanupArgs[0] should be -c, got %v", workload.CleanupArgs[0])
 	}
 
 	// Verify environment variables (should be empty for default HF download)
@@ -255,12 +262,16 @@ func TestBuildModelRepositoryWorkload_Ollama_Default(t *testing.T) {
 		}
 	}
 
-	// Verify download args (should be bash)
-	if len(workload.DownloadArgs) < 3 {
-		t.Fatal("DownloadArgs should have at least 3 elements")
+	// Verify download command and args (should be bash)
+	expectedCommand := []string{"/bin/sh"}
+	if diff := cmp.Diff(expectedCommand, workload.DownloadCommand); diff != "" {
+		t.Errorf("DownloadCommand mismatch (-want +got):\n%s", diff)
 	}
-	if workload.DownloadArgs[0] != "/bin/sh" || workload.DownloadArgs[1] != "-c" {
-		t.Error("DownloadArgs should start with /bin/sh -c")
+	if len(workload.DownloadArgs) < 2 {
+		t.Fatal("DownloadArgs should have at least 2 elements")
+	}
+	if workload.DownloadArgs[0] != "-c" {
+		t.Error("DownloadArgs should start with -c")
 	}
 
 	// Verify cleanup script uses ollama rm
@@ -324,12 +335,16 @@ func TestBuildModelRepositoryWorkload_GGUF_Default(t *testing.T) {
 		t.Error("Cleanup script should contain mount path")
 	}
 
-	// Verify download args (should be bash)
-	if len(workload.DownloadArgs) < 3 {
-		t.Fatal("DownloadArgs should have at least 3 elements")
+	// Verify download command and args (should be bash)
+	expectedCommand := []string{"/bin/sh"}
+	if diff := cmp.Diff(expectedCommand, workload.DownloadCommand); diff != "" {
+		t.Errorf("DownloadCommand mismatch (-want +got):\n%s", diff)
 	}
-	if workload.DownloadArgs[0] != "/bin/sh" || workload.DownloadArgs[1] != "-c" {
-		t.Error("DownloadArgs should start with /bin/sh -c")
+	if len(workload.DownloadArgs) < 2 {
+		t.Fatal("DownloadArgs should have at least 2 elements")
+	}
+	if workload.DownloadArgs[0] != "-c" {
+		t.Error("DownloadArgs should start with -c")
 	}
 }
 
