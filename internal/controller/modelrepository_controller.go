@@ -85,7 +85,19 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Check if autoDownload is enabled and model is not already downloaded
-	if modelRepo.Spec.AutoDownload && (modelRepo.Status.Phase == "" || modelRepo.Status.Phase == aitrigramv1.ModelRepositoryPhasePending) {
+	// Retry failed downloads automatically (allows recovery from transient errors like namespace not found)
+	if modelRepo.Spec.AutoDownload && (modelRepo.Status.Phase == "" || modelRepo.Status.Phase == aitrigramv1.ModelRepositoryPhasePending || modelRepo.Status.Phase == aitrigramv1.ModelRepositoryPhaseFailed) {
+		// If failed, add a delay before retrying to avoid tight loops
+		if modelRepo.Status.Phase == aitrigramv1.ModelRepositoryPhaseFailed {
+			// Check if enough time has passed since last failure (30 seconds)
+			if modelRepo.Status.LastUpdated != nil && time.Since(modelRepo.Status.LastUpdated.Time) < 30*time.Second {
+				remainingTime := 30*time.Second - time.Since(modelRepo.Status.LastUpdated.Time)
+				logger.Info("Waiting before retrying failed download", "remainingTime", remainingTime)
+				return ctrl.Result{RequeueAfter: remainingTime}, nil
+			}
+			logger.Info("Retrying failed download", "modelRepo", modelRepo.Name)
+		}
+
 		// Update status to downloading
 		modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseDownloading
 		modelRepo.Status.Reason = "StartingDownload"
@@ -141,7 +153,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			modelRepo.Status.Message = "Download job not found, resetting to pending"
 			modelRepo.Status.LastUpdated = &metav1.Time{Time: time.Now()}
 			_ = r.Status().Update(ctx, modelRepo)
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+			return ctrl.Result{RequeueAfter: time.Second * 60}, nil
 		}
 
 		// Check job completion
@@ -172,93 +184,10 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) (*batchv1.Job, error) {
 	jobName := fmt.Sprintf("download-%s", modelRepo.Name)
 
-	// Determine image - use custom image if specified, otherwise use default based on source origin
-	image := modelRepo.Spec.DownloadImage
-	if image == "" {
-		// Default images based on source origin
-		switch modelRepo.Spec.Source.Origin {
-		case aitrigramv1.ModelOriginHuggingFace:
-			// we choose vllm image as it has transformers installed
-			// and we don't need to pull another hugging face image
-			image = DefaultVLLMImage
-		case aitrigramv1.ModelOriginOllama:
-			image = DefaultOllamaImage
-		case aitrigramv1.ModelOriginGGUF:
-			image = "python:3.11-slim"
-		default:
-			image = "busybox:latest"
-		}
-	}
-
-	// Get download scripts - either custom or default
-	downloadScriptTemplate := modelRepo.Spec.DownloadScripts
-	if downloadScriptTemplate == "" {
-		// Default scripts based on origin
-		downloadScriptTemplate = buildDefaultDownloadScript(modelRepo.Spec.Source.Origin)
-	}
-
-	// Render the template using pongo2 with model-specific context
-	renderer := NewTemplateRenderer()
-	downloadScript, err := renderer.RenderModelScript(
-		downloadScriptTemplate,
-		modelRepo.Spec.Source.ModelId,
-		modelRepo.Spec.ModelName,
-		modelRepo.Spec.Storage.Path,
-	)
+	// Build workload configuration using the new workload struct
+	workload, err := BuildModelRepositoryWorkload(modelRepo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render download script template: %w", err)
-	}
-
-	// Detect script type (bash or python) and set appropriate command
-	scriptType := DetectScriptType(downloadScript)
-	var args []string
-
-	switch scriptType {
-	case ScriptTypePython:
-		args = []string{
-			"python3",
-			"-c",
-			downloadScript,
-		}
-	case ScriptTypeBash:
-		args = []string{
-			"/bin/bash",
-			"-c",
-			downloadScript,
-		}
-	default:
-		// Fallback to bash
-		args = []string{
-			"/bin/bash",
-			"-c",
-			downloadScript,
-		}
-	}
-
-	// Create volume and volume mount using the unified VolumeSource
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "model-storage",
-			MountPath: modelRepo.Spec.Storage.Path,
-		},
-	}
-
-	volumes := []corev1.Volume{
-		{
-			Name:         "model-storage",
-			VolumeSource: modelRepo.Spec.Storage.VolumeSource,
-		},
-	}
-
-	// Handle secret for HF token if needed
-	var envVars []corev1.EnvVar
-	if modelRepo.Spec.Source.HFTokenSecretRef != nil && modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginHuggingFace {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "HF_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: modelRepo.Spec.Source.HFTokenSecretRef,
-			},
-		})
+		return nil, fmt.Errorf("failed to build ModelRepository workload: %w", err)
 	}
 
 	// Use operator namespace if available, otherwise fall back to default
@@ -284,10 +213,10 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 					Containers: []corev1.Container{
 						{
 							Name:            "model-downloader",
-							Image:           image,
-							Args:            args,
-							Env:             envVars,
-							VolumeMounts:    volumeMounts,
+							Image:           workload.DownloadImage,
+							Args:            workload.DownloadArgs,
+							Env:             workload.Envs,
+							VolumeMounts:    workload.Storage.VolumeMounts,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							SecurityContext: &corev1.SecurityContext{
 								AllowPrivilegeEscalation: &[]bool{false}[0],
@@ -301,7 +230,7 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 							},
 						},
 					},
-					Volumes:       volumes,
+					Volumes:       workload.Storage.Volumes,
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},
@@ -329,74 +258,10 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
 	jobName := fmt.Sprintf("cleanup-%s", modelRepo.Name)
 
-	// Determine image based on script type
-	// Default to a simple shell image, but may need to change based on script
-	deleteScriptTemplate := modelRepo.Spec.DeleteScripts
-	if deleteScriptTemplate == "" {
-		// Get default delete script based on origin
-		deleteScriptTemplate = buildDefaultDeleteScript(modelRepo.Spec.Source.Origin)
-	}
-
-	// Render the template using pongo2 with model-specific context
-	renderer := NewTemplateRenderer()
-	deleteScript, err := renderer.RenderModelScript(
-		deleteScriptTemplate,
-		modelRepo.Spec.Source.ModelId,
-		modelRepo.Spec.ModelName,
-		modelRepo.Spec.Storage.Path,
-	)
+	// Build workload configuration using the new workload struct
+	workload, err := BuildModelRepositoryWorkload(modelRepo)
 	if err != nil {
-		return fmt.Errorf("failed to render delete script template: %w", err)
-	}
-
-	// Detect script type and determine appropriate image and command
-	scriptType := DetectScriptType(deleteScript)
-	var image string
-	var args []string
-
-	switch scriptType {
-	case ScriptTypePython:
-		image = "python:3.11-slim"
-		args = []string{
-			"python3",
-			"-c",
-			deleteScript,
-		}
-	case ScriptTypeBash:
-		// Use busybox for bash scripts, or ollama image for ollama-specific operations
-		if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
-			image = "ollama/ollama:latest"
-		} else {
-			image = "busybox:latest"
-		}
-		args = []string{
-			"/bin/bash",
-			"-c",
-			deleteScript,
-		}
-	default:
-		// Fallback to busybox with bash
-		image = "busybox:latest"
-		args = []string{
-			"/bin/bash",
-			"-c",
-			deleteScript,
-		}
-	}
-
-	// Create volume and volume mount using the unified VolumeSource
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "model-storage",
-			MountPath: modelRepo.Spec.Storage.Path,
-		},
-	}
-
-	volumes := []corev1.Volume{
-		{
-			Name:         "model-storage",
-			VolumeSource: modelRepo.Spec.Storage.VolumeSource,
-		},
+		return fmt.Errorf("failed to build ModelRepository workload: %w", err)
 	}
 
 	// Use operator namespace if available, otherwise fall back to default
@@ -412,7 +277,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		},
 		Spec: batchv1.JobSpec{
 			// Set TTL to automatically delete the job after completion
-			TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(1800), // 30 minutes
+			// TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(1800), // 30 minutes
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					SecurityContext: &corev1.PodSecurityContext{
@@ -424,9 +289,9 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 					Containers: []corev1.Container{
 						{
 							Name:            "cleanup",
-							Image:           image,
-							Args:            args,
-							VolumeMounts:    volumeMounts,
+							Image:           workload.CleanupImage,
+							Args:            workload.CleanupArgs,
+							VolumeMounts:    workload.Storage.VolumeMounts,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							SecurityContext: &corev1.SecurityContext{
 								AllowPrivilegeEscalation: &[]bool{false}[0],
@@ -440,7 +305,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 							},
 						},
 					},
-					Volumes:       volumes,
+					Volumes:       workload.Storage.Volumes,
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},

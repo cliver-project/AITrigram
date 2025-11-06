@@ -24,7 +24,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -196,11 +195,6 @@ func (r *LLMEngineReconciler) createOrUpdateDeploymentForModel(ctx context.Conte
 }
 
 // detectGPUAvailability checks if GPU resources are requested
-// Returns true if GPU resources are requested, false otherwise
-func detectGPUAvailability(llmEngine *aitrigramv1.LLMEngine) bool {
-	return llmEngine.Spec.GPU != nil && llmEngine.Spec.GPU.Enabled
-}
-
 // validateGPUAvailability validates that GPU nodes are available in the cluster
 // Returns an error if GPU is required but no suitable nodes are found
 func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
@@ -312,178 +306,45 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 		replicas = *llmEngine.Spec.Replicas
 	}
 
-	// Determine image based on engine type
-	image := llmEngine.Spec.Image
-	if image == "" {
-		switch llmEngine.Spec.EngineType {
-		case aitrigramv1.LLMEngineTypeOllama:
-			image = DefaultOllamaImage
-		case aitrigramv1.LLMEngineTypeVLLM:
-			image = DefaultVLLMImage
-		default:
-			image = DefaultVLLMImage
-		}
-	}
-
-	// Determine port
-	port := llmEngine.Spec.Port
-	if port == 0 {
-		switch llmEngine.Spec.EngineType {
-		case aitrigramv1.LLMEngineTypeOllama:
-			port = 11434
-		case aitrigramv1.LLMEngineTypeVLLM:
-			port = 8000
-		default:
-			port = 8080
-		}
-	}
-	storagePaths := GetStoragePaths(llmEngine.Spec.EngineType)
-
-	// Build volume mounts and volumes for this specific model (read-only)
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "model-storage",
-			MountPath: storagePaths.ModelPath,
-			ReadOnly:  true, // Read-only for LLMEngine pods
-		},
-	}
-	volumes := []corev1.Volume{
-		{
-			Name:         "model-storage",
-			VolumeSource: modelRepo.Spec.Storage.VolumeSource,
-		},
-	}
-
-	// Add cache volumes (per-pod, not shared)
-	cacheVolumeMounts, cacheVolumes := buildCacheVolumes(llmEngine.Spec.EngineType)
-	volumeMounts = append(volumeMounts, cacheVolumeMounts...)
-	volumes = append(volumes, cacheVolumes...)
-
-	// Detect GPU availability
-	requestGPU := detectGPUAvailability(llmEngine)
-
-	// Build model path using production-ready paths
-	modelPath := fmt.Sprintf("%s/%s", storagePaths.ModelPath, modelRepo.Name)
-
-	// Build container args if not specified
-	args := llmEngine.Spec.Args
-	if len(args) == 0 {
-		switch llmEngine.Spec.EngineType {
-		case aitrigramv1.LLMEngineTypeOllama:
-			args = buildOllamaArgs()
-		case aitrigramv1.LLMEngineTypeVLLM:
-			args = buildVLLMArgs(modelPath, port, requestGPU)
-		}
-	}
-
-	// Build environment variables with defaults, user defined takes precedence
-	var containerEnv []corev1.EnvVar
-	switch llmEngine.Spec.EngineType {
-	case aitrigramv1.LLMEngineTypeOllama:
-		containerEnv = buildOllamaEnv(requestGPU, llmEngine.Spec.Env)
-	case aitrigramv1.LLMEngineTypeVLLM:
-		containerEnv = buildVLLMEnv(requestGPU, llmEngine.Spec.Env)
-	default:
-		containerEnv = buildVLLMEnv(requestGPU, llmEngine.Spec.Env)
-	}
+	// Build workload configuration using the new workload struct
+	workload, _ := BuildLLMEngineWorkload(llmEngine, modelRepo)
 
 	// Generate unique name for this deployment (engine-name + model-name)
 	deploymentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
 
-	// Build container with GPU resources if enabled
+	// Build container with resources and security context
 	container := corev1.Container{
 		Name:  "llm-engine",
-		Image: image,
-		Args:  args,
-		Env:   containerEnv,
+		Image: workload.Image,
+		Args:  workload.Args,
+		Env:   workload.Envs,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "http",
-				ContainerPort: port,
+				ContainerPort: workload.PodPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		VolumeMounts: volumeMounts,
-	}
-
-	// Add GPU resources and security context if GPU is enabled
-	if requestGPU {
-		gpuConfig := llmEngine.Spec.GPU
-		gpuType := gpuConfig.Type
-		if gpuType == "" {
-			gpuType = "nvidia.com/gpu"
-		}
-
-		gpuCount := gpuConfig.Count
-		if gpuCount == 0 {
-			gpuCount = 1
-		}
-
-		// Set resource requests and limits for GPU
-		container.Resources = corev1.ResourceRequirements{
-			Limits: corev1.ResourceList{
-				corev1.ResourceName(gpuType): *resource.NewQuantity(int64(gpuCount), resource.DecimalSI),
-			},
-			Requests: corev1.ResourceList{
-				corev1.ResourceName(gpuType): *resource.NewQuantity(int64(gpuCount), resource.DecimalSI),
-			},
-		}
-
-		// Add security context for GPU access
-		// NVIDIA GPUs require access to device files
-		privileged := false
-		container.SecurityContext = &corev1.SecurityContext{
-			Privileged: &privileged,
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{
-					"SYS_ADMIN", // Required for some GPU operations
-				},
-			},
-		}
+		VolumeMounts:    workload.Storage.VolumeMounts,
+		Resources:       workload.Resources,
+		SecurityContext: workload.SecurityContext,
 	}
 
 	// Build pod spec with node selector and tolerations for GPU
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{container},
-		Volumes:    volumes,
+		Volumes:    workload.Storage.Volumes,
 		HostIPC:    llmEngine.Spec.HostIPC,
 	}
 
 	// Add GPU node selector and tolerations if GPU is enabled
-	if requestGPU {
-		gpuConfig := llmEngine.Spec.GPU
-
-		// Build node selector - start with user-provided selectors
-		nodeSelector := make(map[string]string)
-		if len(gpuConfig.NodeSelector) > 0 {
-			for k, v := range gpuConfig.NodeSelector {
-				nodeSelector[k] = v
-			}
+	if workload.RequestGPU {
+		if len(workload.NodeSelector) > 0 {
+			podSpec.NodeSelector = workload.NodeSelector
 		}
 
-		// Add default GPU label if not already specified by user
-		defaultNodeSelector := getDefaultGPUNodeSelector(gpuConfig.Type)
-		if defaultNodeSelector != nil {
-			for k, v := range defaultNodeSelector {
-				if _, exists := nodeSelector[k]; !exists {
-					nodeSelector[k] = v
-				}
-			}
-		}
-
-		if len(nodeSelector) > 0 {
-			podSpec.NodeSelector = nodeSelector
-		}
-
-		// Add tolerations for GPU nodes (GPU nodes are often tainted)
-		if len(gpuConfig.Tolerations) > 0 {
-			podSpec.Tolerations = gpuConfig.Tolerations
-		} else {
-			// Add default GPU tolerations if none specified
-			defaultTolerations := getDefaultGPUTolerations(gpuConfig.Type)
-			if defaultTolerations != nil {
-				podSpec.Tolerations = defaultTolerations
-			}
+		if len(workload.Tolerations) > 0 {
+			podSpec.Tolerations = workload.Tolerations
 		}
 	}
 
@@ -522,22 +383,11 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 }
 
 func (r *LLMEngineReconciler) createOrUpdateServiceForModel(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) error {
-	servicePort := llmEngine.Spec.ServicePort
-	if servicePort == 0 {
-		servicePort = 8080
-	}
+	// Build workload configuration to get port information
+	workload, _ := BuildLLMEngineWorkload(llmEngine, modelRepo)
 
-	targetPort := llmEngine.Spec.Port
-	if targetPort == 0 {
-		switch llmEngine.Spec.EngineType {
-		case aitrigramv1.LLMEngineTypeOllama:
-			targetPort = 11434
-		case aitrigramv1.LLMEngineTypeVLLM:
-			targetPort = 8000
-		default:
-			targetPort = 8000
-		}
-	}
+	servicePort := workload.ServicePort
+	targetPort := workload.PodPort
 
 	// Generate unique name for this service (engine-name + model-name)
 	serviceName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
