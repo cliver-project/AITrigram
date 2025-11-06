@@ -12,9 +12,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: llmengines.aitrigram.ihomeland.cn
+  name: llmengines.aitrigram.cliver-project.github.io
 spec:
-  group: aitrigram.ihomeland.cn
+  group: aitrigram.cliver-project.github.io
   names:
     kind: LLMEngine
     listKind: LLMEngineList
@@ -2038,6 +2038,13 @@ spec:
                       Common values: "nvidia.com/gpu", "amd.com/gpu"
                     type: string
                 type: object
+              hostIPC:
+                default: false
+                description: |-
+                  HostIPC enables host IPC namespace for the pods
+                  This is often required for GPU workloads (e.g., NVIDIA GPUs) to enable shared memory between processes
+                  WARNING: Enabling this can be a security risk as it allows access to the host's IPC namespace
+                type: boolean
               image:
                 description: |-
                   Image specifies the container image to use for the engine.
@@ -2170,9 +2177,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: modelrepositories.aitrigram.ihomeland.cn
+  name: modelrepositories.aitrigram.cliver-project.github.io
 spec:
-  group: aitrigram.ihomeland.cn
+  group: aitrigram.cliver-project.github.io
   names:
     kind: ModelRepository
     listKind: ModelRepositoryList
@@ -4210,13 +4217,13 @@ metadata:
   name: aitrigram-llmengine-admin-role
 rules:
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   verbs:
   - '*'
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   verbs:
@@ -4231,7 +4238,7 @@ metadata:
   name: aitrigram-llmengine-editor-role
 rules:
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   verbs:
@@ -4243,7 +4250,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   verbs:
@@ -4258,7 +4265,7 @@ metadata:
   name: aitrigram-llmengine-viewer-role
 rules:
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   verbs:
@@ -4266,7 +4273,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   verbs:
@@ -4306,7 +4313,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   - modelrepositories
@@ -4319,14 +4326,14 @@ rules:
   - update
   - watch
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/finalizers
   - modelrepositories/finalizers
   verbs:
   - update
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   - modelrepositories/status

@@ -1,4 +1,4 @@
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
   name: llama3-7b

@@ -26,7 +26,7 @@ kubectl apply -f https://raw.githubusercontent.com/cliver-project/AITrigram/main
 ### Deploy LLM Servings
 
 ```yaml
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: LLMEngine
 metadata:
   name: ollama
@@ -36,7 +36,7 @@ spec:
   port: 11434
   servicePort: 8080
 ---
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
   name: llama3

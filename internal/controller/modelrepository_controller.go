@@ -37,7 +37,7 @@ import (
 )
 
 const (
-	ModelRepositoryFinalizer = "modelrepository.aitrigram.ihomeland.cn/finalizer"
+	ModelRepositoryFinalizer = "modelrepository.aitrigram.cliver-project.github.io/finalizer"
 )
 
 // ModelRepositoryReconciler reconciles a ModelRepository object
@@ -47,9 +47,9 @@ type ModelRepositoryReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=modelrepositories,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=modelrepositories/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=modelrepositories/finalizers,verbs=update
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 

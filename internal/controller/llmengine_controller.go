@@ -41,7 +41,7 @@ import (
 )
 
 const (
-	LLMEngineFinalizer = "llmengine.aitrigram.ihomeland.cn/finalizer"
+	LLMEngineFinalizer = "llmengine.aitrigram.cliver-project.github.io/finalizer"
 )
 
 // LLMEngineReconciler reconciles a LLMEngine object
@@ -51,10 +51,10 @@ type LLMEngineReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=llmengines,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=llmengines/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=llmengines/finalizers,verbs=update
-// +kubebuilder:rbac:groups=aitrigram.ihomeland.cn,resources=modelrepositories,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=llmengines,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=llmengines/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=llmengines/finalizers,verbs=update
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch

@@ -8,13 +8,13 @@ metadata:
   name: aitrigram-llmengine-admin-role
 rules:
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   verbs:
   - '*'
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   verbs:

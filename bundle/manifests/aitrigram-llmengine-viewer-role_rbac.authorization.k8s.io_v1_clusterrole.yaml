@@ -8,7 +8,7 @@ metadata:
   name: aitrigram-llmengine-viewer-role
 rules:
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines
   verbs:
@@ -16,7 +16,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - aitrigram.ihomeland.cn
+  - aitrigram.cliver-project.github.io
   resources:
   - llmengines/status
   verbs:

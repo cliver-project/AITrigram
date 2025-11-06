@@ -1,5 +1,5 @@
 ---
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: LLMEngine
 metadata:
   labels:
@@ -30,7 +30,7 @@ spec:
       - name: "OLLAMA_MODELS"
         value: "/models_dir"
 ---
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
   labels:

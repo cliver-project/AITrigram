@@ -12,14 +12,14 @@ spec:
     owned:
     - displayName: LLMEngine
       kind: LLMEngine
-      name: llmengines.aitrigram.ihomeland.cn
+      name: llmengines.aitrigram.cliver-project.github.io
       version: v1
     - description: |-
         ModelRepository is the Schema for the modelrepositories API
         ModelRepository is a cluster wide CRD so that models can be shared across namespaces.
       displayName: Model Repository
       kind: ModelRepository
-      name: modelrepositories.aitrigram.ihomeland.cn
+      name: modelrepositories.aitrigram.cliver-project.github.io
       version: v1
   description: The operator to undle AI inference providers
   displayName: aitrigram

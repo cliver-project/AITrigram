@@ -1,7 +1,7 @@
 # with this LLMEngine, there are deployments, pods and service created for it.
 # The Ingress service is also created to expose the LLMEngine.
 # The Ingress service is exposed on the host k8s-worker and the path /ollama.
-apiVersion: aitrigram.ihomeland.cn/v1
+apiVersion: aitrigram.cliver-project.github.io/v1
 kind: LLMEngine
 metadata:
   labels:

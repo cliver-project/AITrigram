@@ -5,7 +5,7 @@ metadata:
     alm-examples: |-
       [
         {
-          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "apiVersion": "aitrigram.cliver-project.github.io/v1",
           "kind": "LLMEngine",
           "metadata": {
             "labels": {
@@ -26,7 +26,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "apiVersion": "aitrigram.cliver-project.github.io/v1",
           "kind": "LLMEngine",
           "metadata": {
             "labels": {
@@ -71,7 +71,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "apiVersion": "aitrigram.cliver-project.github.io/v1",
           "kind": "LLMEngine",
           "metadata": {
             "labels": {
@@ -125,7 +125,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "apiVersion": "aitrigram.cliver-project.github.io/v1",
           "kind": "LLMEngine",
           "metadata": {
             "labels": {
@@ -181,7 +181,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "aitrigram.ihomeland.cn/v1",
+          "apiVersion": "aitrigram.cliver-project.github.io/v1",
           "kind": "ModelRepository",
           "metadata": {
             "name": "llama3-7b"
@@ -206,7 +206,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-11-05T11:06:02Z"
+    createdAt: "2025-11-06T04:34:25Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -217,14 +217,14 @@ spec:
     owned:
     - displayName: LLMEngine
       kind: LLMEngine
-      name: llmengines.aitrigram.ihomeland.cn
+      name: llmengines.aitrigram.cliver-project.github.io
       version: v1
     - description: |-
         ModelRepository is the Schema for the modelrepositories API
         ModelRepository is a cluster wide CRD so that models can be shared across namespaces.
       displayName: Model Repository
       kind: ModelRepository
-      name: modelrepositories.aitrigram.ihomeland.cn
+      name: modelrepositories.aitrigram.cliver-project.github.io
       version: v1
   description: The operator to undle AI inference providers
   displayName: aitrigram
@@ -264,7 +264,7 @@ spec:
           - update
           - watch
         - apiGroups:
-          - aitrigram.ihomeland.cn
+          - aitrigram.cliver-project.github.io
           resources:
           - llmengines
           - modelrepositories
@@ -277,14 +277,14 @@ spec:
           - update
           - watch
         - apiGroups:
-          - aitrigram.ihomeland.cn
+          - aitrigram.cliver-project.github.io
           resources:
           - llmengines/finalizers
           - modelrepositories/finalizers
           verbs:
           - update
         - apiGroups:
-          - aitrigram.ihomeland.cn
+          - aitrigram.cliver-project.github.io
           resources:
           - llmengines/status
           - modelrepositories/status

@@ -4,9 +4,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
   creationTimestamp: null
-  name: llmengines.aitrigram.ihomeland.cn
+  name: llmengines.aitrigram.cliver-project.github.io
 spec:
-  group: aitrigram.ihomeland.cn
+  group: aitrigram.cliver-project.github.io
   names:
     kind: LLMEngine
     listKind: LLMEngineList
