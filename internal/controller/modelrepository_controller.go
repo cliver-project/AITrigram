@@ -245,6 +245,42 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
 	logger := log.FromContext(ctx)
 
+	// Check if any LLMEngine still references this ModelRepository
+	llmEngines := &aitrigramv1.LLMEngineList{}
+	if err := r.List(ctx, llmEngines); err != nil {
+		logger.Error(err, "Failed to list LLMEngines")
+		return err
+	}
+
+	dependentEngines := []string{}
+	for _, engine := range llmEngines.Items {
+		for _, ref := range engine.Spec.ModelRefs {
+			if ref == modelRepo.Name {
+				dependentEngines = append(dependentEngines, engine.Name)
+				break
+			}
+		}
+	}
+
+	if len(dependentEngines) > 0 {
+		// Block deletion - update status and requeue
+		msg := fmt.Sprintf("Cannot delete: still referenced by LLMEngines: %v. Please delete the LLMEngines first or remove the modelRef.", dependentEngines)
+		logger.Info("Blocking ModelRepository deletion", "reason", msg)
+
+		// Update status to inform the user
+		modelRepo.Status.Phase = aitrigramv1.ModelRepositoryPhaseFailed
+		modelRepo.Status.Message = msg
+		if err := r.Status().Update(ctx, modelRepo); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
+
+		// Return error to requeue and keep checking
+		return fmt.Errorf("deletion blocked: %s", msg)
+	}
+
+	// No dependencies - proceed with cleanup
+	logger.Info("No LLMEngine dependencies found, proceeding with deletion")
+
 	// Create a cleanup job to delete the model files from the storage
 	if err := r.createCleanupJob(ctx, modelRepo); err != nil {
 		logger.Error(err, "Failed to create cleanup job, will still remove finalizer")
