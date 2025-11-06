@@ -25,11 +25,20 @@ import (
 
 // ModelStorage defines a generic storage mount configuration
 // This is the unified storage type used across ModelRepository and LLMEngine
+// +kubebuilder:validation:XValidation:rule="has(self.persistentVolumeClaim) || has(self.hostPath) || has(self.nfs) || has(self.glusterfs) || has(self.cephfs) || has(self.rbd) || has(self.flexVolume) || has(self.cinder) || has(self.csi) || has(self.fc) || has(self.azureFile) || has(self.azureDisk) || has(self.vsphereVolume) || has(self.quobyte) || has(self.iscsi) || has(self.flocker) || has(self.gcePersistentDisk) || has(self.awsElasticBlockStore) || has(self.gitRepo) || has(self.scaleIO) || has(self.storageos) || has(self.photonPersistentDisk) || has(self.portworxVolume)",message="At least one volume source must be specified (e.g., persistentVolumeClaim, hostPath, nfs, etc.)"
+// +kubebuilder:validation:XValidation:rule="!has(self.emptyDir)",message="emptyDir storage cannot be shared between download job and LLMEngine pods. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
+// +kubebuilder:validation:XValidation:rule="!has(self.configMap)",message="configMap storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
+// +kubebuilder:validation:XValidation:rule="!has(self.secret)",message="secret storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
+// +kubebuilder:validation:XValidation:rule="!has(self.downwardAPI)",message="downwardAPI storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
+// +kubebuilder:validation:XValidation:rule="!has(self.projected)",message="projected storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
 type ModelStorage struct {
 	// Path is the mount path inside the container
 	// +kubebuilder:validation:Required
 	Path string `json:"path"`
 	// VolumeSource specifies the source of the volume (supports all Kubernetes volume types)
+	// Only shareable and writable volume types are allowed (e.g., PersistentVolumeClaim, HostPath, NFS)
+	// Non-shareable types like emptyDir, configMap, secret, downwardAPI, and projected are not allowed
+	// At least one volume source type must be specified
 	corev1.VolumeSource `json:",inline"`
 }
 
@@ -74,7 +83,6 @@ type ModelRepositorySpec struct {
 	// Storage configuration for the model
 	// This defines where and how the model files are stored, the LLMEngine may have different storage than this one, although it has option to reuse this storage.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:default:={path:"/data/models"}
 	Storage ModelStorage `json:"storage"`
 
 	// AutoDownload indicates whether to automatically download the model
@@ -100,6 +108,12 @@ type ModelRepositorySpec struct {
 	// Can be either bash or Python script (auto-detected)
 	// +optional
 	DeleteScripts string `json:"deleteScripts,omitempty"`
+
+	// NodeSelector specifies node selector requirements for scheduling download and cleanup jobs
+	// This is particularly important when using HostPath storage to ensure jobs run on the correct node
+	// Example: {"kubernetes.io/hostname": "kind-control-plane"}
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // ModelRepositoryPhase defines the phase of the model repository.

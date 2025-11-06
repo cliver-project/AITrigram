@@ -1,5 +1,11 @@
 # Example PersistentVolume and PersistentVolumeClaim for shared model storage
-# This is an example of how to set up shared model storage for vLLM models
+# This is an example of how to set up shared model storage for LLM models
+#
+# IMPORTANT: Model storage must be shareable across pods (download job and LLMEngine pods)
+# - Use PersistentVolumeClaim with ReadWriteMany access mode (recommended)
+# - Or use HostPath for single-node development/testing
+# - Or use network storage (NFS, Ceph, cloud volumes, etc.)
+# - DO NOT use emptyDir, configMap, secret, downwardAPI, or projected volumes
 
 ---
 apiVersion: v1

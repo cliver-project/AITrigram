@@ -1,6 +1,6 @@
 ---
-# Simple e2e test sample for Ollama with llama3.2:latest
-# This is the minimal configuration for testing Ollama LLMEngine
+# Simple e2e test sample for Ollama with llama3.2:latest in kind cluster
+# This configuration uses HostPath storage and nodeSelector to ensure pods run on the same node
 
 # Step 1: Create ModelRepository for llama3.2:latest
 apiVersion: aitrigram.cliver-project.github.io/v1
@@ -12,6 +12,13 @@ spec:
     origin: ollama
     modelId: llama3.2:latest
   autoDownload: true
+  storage:
+    path: /data/models
+    hostPath:
+      path: /tmp/aitrigram-models  # HostPath on the kind node
+      type: DirectoryOrCreate
+  nodeSelector:
+    kubernetes.io/hostname: kind-control-plane  # Pin download job to control-plane node
 
 ---
 # Step 2: Create LLMEngine for Ollama
@@ -25,3 +32,5 @@ spec:
     - llama3-2-e2e
   replicas: 1
   servicePort: 11434
+  nodeSelector:
+    kubernetes.io/hostname: kind-control-plane  # Pin engine pods to control-plane node where HostPath exists

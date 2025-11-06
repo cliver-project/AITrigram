@@ -94,6 +94,8 @@ func GetStoragePaths(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Mo
 	case aitrigramv1.LLMEngineTypeOllama:
 		// For Ollama, OLLAMA_MODELS points to model storage
 		cachePaths["OLLAMA_MODELS"] = modelPath
+		// OLLAMA_HOME for Ollama config/identity keys
+		cachePaths["OLLAMA_HOME"] = modelPath + "/.ollama"
 	}
 
 	return StoragePaths{

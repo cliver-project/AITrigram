@@ -252,6 +252,7 @@ func TestBuildModelRepositoryWorkload_Ollama_Default(t *testing.T) {
 	expectedOllamaEnvs := map[string]string{
 		"OLLAMA_MODELS": "/data/models",
 		"OLLAMA_CACHE":  "/data/models_cache",
+		"OLLAMA_HOME":   "/data/models/.ollama",
 	}
 
 	for key, expectedVal := range expectedOllamaEnvs {

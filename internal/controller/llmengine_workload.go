@@ -206,7 +206,7 @@ func BuildModelRepositoryWorkload(modelRepo *aitrigramv1.ModelRepository) (*Mode
 		})
 	}
 
-	// Ollama: Set OLLAMA_MODELS and OLLAMA_CACHE
+	// Ollama: Set OLLAMA_MODELS, OLLAMA_CACHE, and OLLAMA_HOME
 	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
 		envVars = append(envVars,
 			corev1.EnvVar{
@@ -216,6 +216,10 @@ func BuildModelRepositoryWorkload(modelRepo *aitrigramv1.ModelRepository) (*Mode
 			corev1.EnvVar{
 				Name:  "OLLAMA_CACHE",
 				Value: modelRepo.Spec.Storage.Path + "_cache",
+			},
+			corev1.EnvVar{
+				Name:  "OLLAMA_HOME",
+				Value: modelRepo.Spec.Storage.Path + "/.ollama",
 			},
 		)
 	}
@@ -376,15 +380,22 @@ func BuildLLMEngineWorkload(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigr
 			},
 		}
 
-		// Build node selector
+		// Build node selector - start with general nodeSelector from spec
 		workload.NodeSelector = make(map[string]string)
+		if len(llmEngine.Spec.NodeSelector) > 0 {
+			for k, v := range llmEngine.Spec.NodeSelector {
+				workload.NodeSelector[k] = v
+			}
+		}
+
+		// Add GPU-specific node selectors (these override general selectors if there's a conflict)
 		if len(gpuConfig.NodeSelector) > 0 {
 			for k, v := range gpuConfig.NodeSelector {
 				workload.NodeSelector[k] = v
 			}
 		}
 
-		// Add default GPU node selector
+		// Add default GPU node selector (lowest priority, only if not already set)
 		defaultNodeSelector := getDefaultGPUNodeSelector(gpuConfig.Type)
 		if defaultNodeSelector != nil {
 			for k, v := range defaultNodeSelector {
@@ -423,6 +434,11 @@ func BuildLLMEngineWorkload(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigr
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 			},
+		}
+
+		// Apply general nodeSelector for CPU-only deployments
+		if len(llmEngine.Spec.NodeSelector) > 0 {
+			workload.NodeSelector = llmEngine.Spec.NodeSelector
 		}
 	}
 

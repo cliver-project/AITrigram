@@ -21,6 +21,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -84,6 +85,23 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		controllerutil.AddFinalizer(modelRepo, ModelRepositoryFinalizer)
 		if err := r.Update(ctx, modelRepo); err != nil {
 			return ctrl.Result{}, err
+		}
+	}
+
+	// Validate PVC storage if using PersistentVolumeClaim
+	if modelRepo.Spec.Storage.PersistentVolumeClaim != nil {
+		if err := r.validatePVCStorage(ctx, modelRepo); err != nil {
+			// Check if it's a "PVC not bound" error - if so, just requeue without updating status to Failed
+			if strings.Contains(err.Error(), "not bound yet") {
+				logger.Info("PVC not bound yet, will retry", "error", err.Error())
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
+			// For other validation errors (access mode, not found, etc.), mark as Failed
+			logger.Error(err, "PVC storage validation failed")
+			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed,
+				"StorageValidationFailed", fmt.Sprintf("PVC storage validation failed: %v", err))
+			// Don't return error - just update status and requeue
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
 	}
 
@@ -175,6 +193,41 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		namespace = "default"
 	}
 
+	podSpec := corev1.PodSpec{
+		SecurityContext: &corev1.PodSecurityContext{
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		Containers: []corev1.Container{
+			{
+				Name:            "model-downloader",
+				Image:           workload.DownloadImage,
+				Command:         workload.DownloadCommand,
+				Args:            workload.DownloadArgs,
+				Env:             workload.Envs,
+				VolumeMounts:    workload.Storage.VolumeMounts,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &[]bool{false}[0],
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				},
+			},
+		},
+		Volumes:       workload.Storage.Volumes,
+		RestartPolicy: corev1.RestartPolicyOnFailure,
+	}
+
+	// Apply nodeSelector from ModelRepository spec if specified
+	if len(modelRepo.Spec.NodeSelector) > 0 {
+		podSpec.NodeSelector = modelRepo.Spec.NodeSelector
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -182,37 +235,7 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &[]bool{true}[0],
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:            "model-downloader",
-							Image:           workload.DownloadImage,
-							Command:         workload.DownloadCommand,
-							Args:            workload.DownloadArgs,
-							Env:             workload.Envs,
-							VolumeMounts:    workload.Storage.VolumeMounts,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: &[]bool{false}[0],
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-								RunAsNonRoot: &[]bool{true}[0],
-								SeccompProfile: &corev1.SeccompProfile{
-									Type: corev1.SeccompProfileTypeRuntimeDefault,
-								},
-							},
-						},
-					},
-					Volumes:       workload.Storage.Volumes,
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-				},
+				Spec: podSpec,
 			},
 		},
 	}
@@ -294,45 +317,48 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		namespace = "default"
 	}
 
+	cleanupPodSpec := corev1.PodSpec{
+		SecurityContext: &corev1.PodSecurityContext{
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		Containers: []corev1.Container{
+			{
+				Name:            "cleanup",
+				Image:           workload.CleanupImage,
+				Command:         workload.CleanupCommand,
+				Args:            workload.CleanupArgs,
+				VolumeMounts:    workload.Storage.VolumeMounts,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &[]bool{false}[0],
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				},
+			},
+		},
+		Volumes:       workload.Storage.Volumes,
+		RestartPolicy: corev1.RestartPolicyOnFailure,
+	}
+
+	// Apply nodeSelector from ModelRepository spec if specified
+	if len(modelRepo.Spec.NodeSelector) > 0 {
+		cleanupPodSpec.NodeSelector = modelRepo.Spec.NodeSelector
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: namespace,
 		},
 		Spec: batchv1.JobSpec{
-			// Set TTL to automatically delete the job after completion
-			// TTLSecondsAfterFinished: func(i int32) *int32 { return &i }(1800), // 30 minutes
 			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &[]bool{true}[0],
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:            "cleanup",
-							Image:           workload.CleanupImage,
-							Command:         workload.CleanupCommand,
-							Args:            workload.CleanupArgs,
-							VolumeMounts:    workload.Storage.VolumeMounts,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: &[]bool{false}[0],
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-								RunAsNonRoot: &[]bool{true}[0],
-								SeccompProfile: &corev1.SeccompProfile{
-									Type: corev1.SeccompProfileTypeRuntimeDefault,
-								},
-							},
-						},
-					},
-					Volumes:       workload.Storage.Volumes,
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-				},
+				Spec: cleanupPodSpec,
 			},
 		},
 	}
@@ -359,6 +385,60 @@ func (r *ModelRepositoryReconciler) updateModelRepoStatus(ctx context.Context, m
 
 		return r.Status().Update(ctx, fresh)
 	})
+}
+
+// validatePVCStorage validates that the PVC exists and has appropriate access modes
+func (r *ModelRepositoryReconciler) validatePVCStorage(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
+	logger := log.FromContext(ctx)
+
+	// Get PVC name
+	pvcName := modelRepo.Spec.Storage.PersistentVolumeClaim.ClaimName
+	if pvcName == "" {
+		return fmt.Errorf("PersistentVolumeClaim claimName is required")
+	}
+
+	// Fetch the PVC from the operator's namespace
+	pvc := &corev1.PersistentVolumeClaim{}
+	pvcKey := client.ObjectKey{
+		Name:      pvcName,
+		Namespace: r.OperatorNamespace,
+	}
+
+	if err := r.Get(ctx, pvcKey, pvc); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("PersistentVolumeClaim %s not found in namespace %s", pvcName, r.OperatorNamespace)
+		}
+		return fmt.Errorf("failed to get PersistentVolumeClaim: %w", err)
+	}
+
+	// Check access modes - only ReadWriteMany is supported
+	hasReadWriteMany := false
+	for _, mode := range pvc.Spec.AccessModes {
+		if mode == corev1.ReadWriteMany {
+			hasReadWriteMany = true
+			break
+		}
+	}
+
+	if !hasReadWriteMany {
+		return fmt.Errorf("PersistentVolumeClaim %s must have ReadWriteMany access mode for shared access between download job and LLMEngine pods. Current modes: %v. Use ReadWriteMany PVC or consider using HostPath with nodeSelector for single-node clusters", pvcName, pvc.Spec.AccessModes)
+	}
+
+	// Check if PVC is bound - warn if not, but don't fail
+	if pvc.Status.Phase != corev1.ClaimBound {
+		logger.Info("PVC is not bound yet, will retry",
+			"pvc", pvcName,
+			"currentPhase", pvc.Status.Phase,
+			"retryAfter", "10s")
+		return fmt.Errorf("PVC not bound yet (phase: %s), will retry in 10 seconds", pvc.Status.Phase)
+	}
+
+	logger.Info("PVC storage validation passed",
+		"pvc", pvcName,
+		"accessModes", pvc.Spec.AccessModes,
+		"phase", pvc.Status.Phase)
+
+	return nil
 }
 
 func (r *ModelRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {

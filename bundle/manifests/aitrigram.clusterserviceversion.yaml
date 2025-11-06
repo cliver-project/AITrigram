@@ -206,7 +206,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-11-06T04:34:25Z"
+    createdAt: "2025-11-06T12:17:04Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1

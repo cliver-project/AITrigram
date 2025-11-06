@@ -114,6 +114,14 @@ type LLMEngineSpec struct {
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
+	// NodeSelector specifies node selector requirements for scheduling LLMEngine pods
+	// This is a general node selector that applies to all pods regardless of GPU configuration
+	// When GPU is enabled, this will be merged with GPU-specific node selectors
+	// Common use cases: pin pods to specific nodes for HostPath storage, zone affinity, etc.
+	// Example: {"kubernetes.io/hostname": "kind-control-plane"}
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// GPU specifies GPU resource configuration
 	// When GPU is enabled, pods will request GPU resources and be scheduled on GPU nodes
 	// If GPU nodes are not available or lack sufficient resources, deployment will fail

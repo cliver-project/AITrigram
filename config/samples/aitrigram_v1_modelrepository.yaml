@@ -15,15 +15,24 @@ spec:
       key: token
   storage:
     path: /models
-    # Use PVC for persistent storage
+    # REQUIRED: Use a shareable storage type that persists across pods
+    # Recommended: PersistentVolumeClaim (for production)
     persistentVolumeClaim:
       claimName: vllm-shared-models
-    # Alternative: Use EmptyDir for temporary storage (uncomment below and comment out PVC)
-    # emptyDir: {}
-    # Alternative: Use HostPath for local storage (uncomment below and comment out PVC)
+
+    # Alternative shareable storage types (uncomment one):
+    # HostPath (for development/testing on single node)
     # hostPath:
     #   path: /data/models
     #   type: DirectoryOrCreate
+
+    # NFS (for multi-node clusters)
+    # nfs:
+    #   server: nfs-server.example.com
+    #   path: /exports/models
+
+    # Note: emptyDir, configMap, secret, downwardAPI, and projected volumes
+    # are NOT allowed as they cannot be shared between download job and LLMEngine pods
   autoDownload: true
   # Optional: Specify custom download image (defaults based on origin)
   # downloadImage: python:3.11-slim

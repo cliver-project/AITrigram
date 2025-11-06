@@ -1830,6 +1830,37 @@ spec:
                 required:
                 - path
                 type: object
+                x-kubernetes-validations:
+                - message: At least one volume source must be specified (e.g., persistentVolumeClaim,
+                    hostPath, nfs, etc.)
+                  rule: has(self.persistentVolumeClaim) || has(self.hostPath) || has(self.nfs)
+                    || has(self.glusterfs) || has(self.cephfs) || has(self.rbd) ||
+                    has(self.flexVolume) || has(self.cinder) || has(self.csi) || has(self.fc)
+                    || has(self.azureFile) || has(self.azureDisk) || has(self.vsphereVolume)
+                    || has(self.quobyte) || has(self.iscsi) || has(self.flocker) ||
+                    has(self.gcePersistentDisk) || has(self.awsElasticBlockStore)
+                    || has(self.gitRepo) || has(self.scaleIO) || has(self.storageos)
+                    || has(self.photonPersistentDisk) || has(self.portworxVolume)
+                - message: emptyDir storage cannot be shared between download job
+                    and LLMEngine pods. Use PersistentVolumeClaim, HostPath, NFS,
+                    or other shareable volume types
+                  rule: '!has(self.emptyDir)'
+                - message: configMap storage is read-only and cannot be used for model
+                    storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable
+                    volume types
+                  rule: '!has(self.configMap)'
+                - message: secret storage is read-only and cannot be used for model
+                    storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable
+                    volume types
+                  rule: '!has(self.secret)'
+                - message: downwardAPI storage is read-only and cannot be used for
+                    model storage. Use PersistentVolumeClaim, HostPath, NFS, or other
+                    shareable volume types
+                  rule: '!has(self.downwardAPI)'
+                - message: projected storage is read-only and cannot be used for model
+                    storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable
+                    volume types
+                  rule: '!has(self.projected)'
               engineType:
                 default: vllm
                 description: EngineType specifies the type of LLM engine (e.g., ollama,
@@ -2050,6 +2081,16 @@ spec:
                   type: string
                 minItems: 1
                 type: array
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector specifies node selector requirements for scheduling LLMEngine pods
+                  This is a general node selector that applies to all pods regardless of GPU configuration
+                  When GPU is enabled, this will be merged with GPU-specific node selectors
+                  Common use cases: pin pods to specific nodes for HostPath storage, zone affinity, etc.
+                  Example: {"kubernetes.io/hostname": "kind-control-plane"}
+                type: object
               port:
                 description: Port specifies the HTTP port for the engine inside the
                   container
