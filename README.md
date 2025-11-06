@@ -25,92 +25,38 @@ kubectl apply -f https://raw.githubusercontent.com/cliver-project/AITrigram/main
 
 ### Deploy LLM Servings
 
+Here's a minimal example to deploy DeepSeek-R1 with vLLM:
+
 ```yaml
-apiVersion: aitrigram.cliver-project.github.io/v1
-kind: LLMEngine
-metadata:
-  name: ollama
-  namespace: default
-spec:
-  engineType: "ollama"
-  port: 11434
-  servicePort: 8080
 ---
+# Step 1: Create the ModelRepository
 apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
-  name: llama3
+  name: deepseek-r1-7b
 spec:
-  modelName: "llama3"
   source:
-    type: ollama
+    origin: huggingface
+    modelId: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
   storage:
-    type: emptyDir
-  supportedEngines:
-    - ollama
+    path: /data/models
+    emptyDir: {}
   autoDownload: true
-```
-Then, you have 2 replicas of Ollama servers which has the `llama3.2:latest` ready for you to access, and it has a service published too at: `ollama-llama3.default.svc.cluster.local:8080` inside the cluster.
 
-If you want to access it from outside of the cluster, create ingress or route according to your cluster type:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+---
+# Step 2: Create the LLMEngine to serve the model
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: LLMEngine
 metadata:
-  name: ollama-engine
-  annotations:
-    # path-rewrite removes the '/ollama' in the path to pass to backend ollama servers.
-     haproxy.org/path-rewrite: /ollama/(.*) /\1
-  labels:
-    name: ollama-engine
+  name: deepseek-r1-engine
 spec:
-  rules:
-  - host: k8s-worker
-    http:
-      paths:
-      - pathType: Prefix
-        path: /ollama
-        backend:
-          service:
-            name: ollama-llama3
-            port:
-              number: 8080
+  engineType: vllm
+  modelRefs:
+    - deepseek-r1-7b
+  replicas: 1
 ```
 
-Or on openshift:
+This will create a vLLM deployment serving the DeepSeek-R1 model. The model will be automatically downloaded from HuggingFace and served at `deepseek-r1-engine-deepseek-r1-7b.default.svc.cluster.local:8000` inside the cluster.
 
-```yaml
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: ollama-llama3
-  namespace: default
-spec:
-  port:
-    targetPort: 8080
-  to:
-    kind: Service
-    name: ollama-llama3
+For more examples including Ollama, GPU configurations, and advanced settings, check the [config/samples/](config/samples/) directory.
 
-```
-
-#### To Debug
-
-Create a `.vscode/launch.json` file with a configuration to debug:
-```json
-    "configurations": [
-        {
-            "name": "Launch Go",
-            "type": "go",
-            "request": "launch",
-            "mode": "debug",
-            "console": "integratedTerminal",
-            "program": "${file}",
-            "args": ["run"]
-        }
-    ]
-```
-Debug on the `main.go` to start the controller in you host
-
-Or you can run the main.go directly: `go run cmd/main.go`
