@@ -160,6 +160,27 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 
+		// Delete any stale cleanup job from a previous deletion to avoid conflicts
+		namespace := r.OperatorNamespace
+		if namespace == "" {
+			namespace = "default"
+		}
+		cleanupJobName := fmt.Sprintf("cleanup-%s", modelRepo.Name)
+		cleanupJob := &batchv1.Job{}
+		if err := r.Get(ctx, client.ObjectKey{Name: cleanupJobName, Namespace: namespace}, cleanupJob); err == nil {
+			// Cleanup job exists, delete it
+			logger.Info("Found stale cleanup job, deleting it before creating download job",
+				"cleanupJob", cleanupJobName,
+				"modelRepo", modelRepo.Name)
+			if err := r.Delete(ctx, cleanupJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+				logger.Error(err, "Failed to delete stale cleanup job", "cleanupJob", cleanupJobName)
+				// Continue anyway - the download job creation might still succeed
+			}
+		} else if !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to check for stale cleanup job", "cleanupJob", cleanupJobName)
+			// Continue anyway
+		}
+
 		// Create download job
 		job, err := r.createDownloadJob(ctx, modelRepo, provider)
 		if err != nil {
@@ -461,6 +482,11 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 	if err != nil {
 		return fmt.Errorf("failed to build cleanup job: %w", err)
 	}
+
+	// Set TTL to auto-delete the job after completion (600 seconds = 10 minutes)
+	// This prevents stale cleanup jobs from conflicting with future ModelRepositories
+	ttl := int32(600)
+	job.Spec.TTLSecondsAfterFinished = &ttl
 
 	// Create the cleanup job (don't set owner reference as the owner is being deleted)
 	return r.Create(ctx, job)
