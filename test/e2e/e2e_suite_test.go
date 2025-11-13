@@ -74,7 +74,7 @@ var _ = BeforeSuite(func() {
 
 	// Check if controller is already deployed
 	By("checking if controller is already deployed")
-	cmd = exec.Command("kubectl", "get", "deployment", "controller-manager", "-n", "aitrigram-system")
+	cmd = exec.Command("kubectl", "get", "deployment", "aitrigram-controller-manager", "-n", "aitrigram-system")
 	_, err = utils.Run(cmd)
 	controllerDeployed := (err == nil)
 	if controllerDeployed {
@@ -104,7 +104,7 @@ var _ = BeforeSuite(func() {
 	// Wait for controller to be ready if it was just deployed or already exists
 	By("waiting for controller to be ready")
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "deployment", "controller-manager", "-n", "aitrigram-system",
+		cmd := exec.Command("kubectl", "get", "deployment", "aitrigram-controller-manager", "-n", "aitrigram-system",
 			"-o", "jsonpath={.status.readyReplicas}")
 		output, err := utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get controller deployment status")
@@ -122,7 +122,7 @@ var _ = AfterSuite(func() {
 
 		// Dump controller logs
 		By("Fetching controller-manager logs")
-		cmd := exec.Command("kubectl", "logs", "deployment/controller-manager", "-n", "aitrigram-system", "--tail=200")
+		cmd := exec.Command("kubectl", "logs", "deployment/aitrigram-controller-manager", "-n", "aitrigram-system", "--tail=200")
 		if output, err := utils.Run(cmd); err == nil {
 			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== CONTROLLER LOGS (last 200 lines) ===\n%s\n", output)
 		} else {
