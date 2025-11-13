@@ -113,12 +113,30 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# The default setup assumes Minikube is available and uses 'make build install deploy' for setup.
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: manifests generate fmt vet ## Run all e2e tests using Minikube.
 	go test ./test/e2e/ -v -ginkgo.v
+
+.PHONY: test-e2e-manager
+test-e2e-manager: manifests generate fmt vet ## Run only the Manager e2e tests (controller deployment verification).
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "Manager"
+
+.PHONY: test-e2e-storage
+test-e2e-storage: manifests generate fmt vet ## Run only the ModelRepository Storage e2e tests.
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "Storage"
+
+.PHONY: test-e2e-storage-hostpath
+test-e2e-storage-hostpath: manifests generate fmt vet ## Run only the HostPath storage e2e tests.
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "HostPath"
+
+.PHONY: test-e2e-storage-nfs
+test-e2e-storage-nfs: manifests generate fmt vet ## Run only the NFS storage e2e tests.
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "NFS"
+
+.PHONY: test-e2e-storage-pvc
+test-e2e-storage-pvc: manifests generate fmt vet ## Run only the PVC storage e2e tests (both RWX and RWO).
+	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "PVC"
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

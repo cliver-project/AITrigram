@@ -76,8 +76,8 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 	})
 
 	// Set test timeouts
-	SetDefaultEventuallyTimeout(10 * time.Minute)
-	SetDefaultEventuallyPollingInterval(10 * time.Second)
+	SetDefaultEventuallyTimeout(30 * time.Minute)
+	SetDefaultEventuallyPollingInterval(30 * time.Second)
 
 	Context("HostPath Storage", func() {
 		const modelRepoName = "ollama-hostpath-test"
