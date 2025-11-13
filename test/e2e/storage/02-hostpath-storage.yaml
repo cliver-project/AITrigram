@@ -1,0 +1,39 @@
+# Integration Test: HostPath Storage
+# Prerequisites:
+# - kind cluster or cluster with nodes that allow HostPath
+# - /mnt/models directory will be created by DirectoryOrCreate
+
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: test-hostpath-model
+spec:
+  source:
+    origin: huggingface
+    modelId: "hf-internal-testing/tiny-random-gpt2"
+  storage:
+    type: HostPath
+    mountPath: /data/models
+    hostPath:
+      path: /mnt/models/test-hostpath
+      type: DirectoryOrCreate
+  autoDownload: true
+
+---
+# Optional: Pin to specific node
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: test-hostpath-node-specific
+spec:
+  source:
+    origin: huggingface
+    modelId: "hf-internal-testing/tiny-random-gpt2"
+  storage:
+    type: HostPath
+    mountPath: /data/models
+    hostPath:
+      path: /mnt/models/test-node-specific
+      type: DirectoryOrCreate
+      nodeName: kind-worker  # Adjust to your node name
+  autoDownload: true

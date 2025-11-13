@@ -23,24 +23,132 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ModelStorage defines a generic storage mount configuration
+// StorageType defines the type of storage backend
+// +kubebuilder:validation:Enum=PersistentVolumeClaim;NFS;HostPath
+type StorageType string
+
+const (
+	StorageTypePVC      StorageType = "PersistentVolumeClaim"
+	StorageTypeNFS      StorageType = "NFS"
+	StorageTypeHostPath StorageType = "HostPath"
+)
+
+// ModelStorage defines where and how model files are stored
 // This is the unified storage type used across ModelRepository and LLMEngine
-// +kubebuilder:validation:XValidation:rule="has(self.persistentVolumeClaim) || has(self.hostPath) || has(self.nfs) || has(self.glusterfs) || has(self.cephfs) || has(self.rbd) || has(self.flexVolume) || has(self.cinder) || has(self.csi) || has(self.fc) || has(self.azureFile) || has(self.azureDisk) || has(self.vsphereVolume) || has(self.quobyte) || has(self.iscsi) || has(self.flocker) || has(self.gcePersistentDisk) || has(self.awsElasticBlockStore) || has(self.gitRepo) || has(self.scaleIO) || has(self.storageos) || has(self.photonPersistentDisk) || has(self.portworxVolume)",message="At least one volume source must be specified (e.g., persistentVolumeClaim, hostPath, nfs, etc.)"
-// +kubebuilder:validation:XValidation:rule="!has(self.emptyDir)",message="emptyDir storage cannot be shared between download job and LLMEngine pods. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
-// +kubebuilder:validation:XValidation:rule="!has(self.configMap)",message="configMap storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
-// +kubebuilder:validation:XValidation:rule="!has(self.secret)",message="secret storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
-// +kubebuilder:validation:XValidation:rule="!has(self.downwardAPI)",message="downwardAPI storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
-// +kubebuilder:validation:XValidation:rule="!has(self.projected)",message="projected storage is read-only and cannot be used for model storage. Use PersistentVolumeClaim, HostPath, NFS, or other shareable volume types"
 type ModelStorage struct {
-	// Path is the mount path inside the container
+	// Type indicates which storage backend to use
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=PersistentVolumeClaim;NFS;HostPath
+	Type StorageType `json:"type"`
+
+	// MountPath is the path where models will be stored/mounted inside containers
+	// Defaults to /data/models if not specified
+	// +optional
+	MountPath string `json:"mountPath,omitempty"`
+
+	// PersistentVolumeClaim storage configuration
+	// Required when Type is PersistentVolumeClaim
+	// if existingClaim is specified, a new PVC will not be created, and the operator will try to search it within the same namespace as the ModelRepository CR, typically it is 'aitrigram-system'.
+	// otherwise, a new PVC will be created in the same namespace as the ModelRepository CR.
+	// +optional
+	PersistentVolumeClaim *PVCStorageSpec `json:"persistentVolumeClaim,omitempty"`
+
+	// NFS storage configuration
+	// Required when Type is NFS
+	// +optional
+	NFS *NFSStorageSpec `json:"nfs,omitempty"`
+
+	// HostPath storage configuration
+	// Required when Type is HostPath
+	// +optional
+	HostPath *HostPathStorageSpec `json:"hostPath,omitempty"`
+}
+
+// PVCStorageSpec configures PersistentVolumeClaim storage
+type PVCStorageSpec struct {
+	// StorageClassName for the PVC
+	// If not specified, uses the cluster default storage class
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+
+	// Size of the volume (e.g., "50Gi", "100Gi")
+	// +kubebuilder:validation:Required
+	Size string `json:"size"`
+
+	// AccessMode for the PVC
+	// ReadWriteMany (RWX) allows multiple nodes to mount the volume
+	// ReadWriteOnce (RWO) binds to a single node
+	// +optional
+	// +kubebuilder:default=ReadWriteMany
+	// +kubebuilder:validation:Enum=ReadWriteMany;ReadWriteOnce
+	AccessMode corev1.PersistentVolumeAccessMode `json:"accessMode,omitempty"`
+
+	// ExistingClaim references an existing PVC instead of creating a new one
+	// When specified, Size, StorageClassName, and AccessMode are ignored
+	// +optional
+	ExistingClaim *string `json:"existingClaim,omitempty"`
+
+	// VolumeMode defines whether the volume is a filesystem or block device
+	// Defaults to Filesystem if not specified
+	// +optional
+	VolumeMode *corev1.PersistentVolumeMode `json:"volumeMode,omitempty"`
+
+	// Selector is used to find matching PersistentVolumes
+	// +optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
+
+	// RetainPolicy determines what happens to the PVC when ModelRepository is deleted
+	// "Delete" removes the PVC (default for newly created PVCs)
+	// "Retain" keeps the PVC (default for existingClaim)
+	// +optional
+	// +kubebuilder:validation:Enum=Delete;Retain
+	RetainPolicy *RetainPolicy `json:"retainPolicy,omitempty"`
+}
+
+// NFSStorageSpec configures NFS storage
+type NFSStorageSpec struct {
+	// Server is the hostname or IP address of the NFS server
+	// +kubebuilder:validation:Required
+	Server string `json:"server"`
+
+	// Path exported by the NFS server
 	// +kubebuilder:validation:Required
 	Path string `json:"path"`
-	// VolumeSource specifies the source of the volume (supports all Kubernetes volume types)
-	// Only shareable and writable volume types are allowed (e.g., PersistentVolumeClaim, HostPath, NFS)
-	// Non-shareable types like emptyDir, configMap, secret, downwardAPI, and projected are not allowed
-	// At least one volume source type must be specified
-	corev1.VolumeSource `json:",inline"`
+
+	// ReadOnly mounts the NFS volume as read-only
+	// Note: Download jobs require write access, so this should typically be false
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
+
+// HostPathStorageSpec configures HostPath storage
+type HostPathStorageSpec struct {
+	// Path on the host node's filesystem
+	// +kubebuilder:validation:Required
+	Path string `json:"path"`
+
+	// Type of HostPath volume
+	// DirectoryOrCreate creates the directory if it doesn't exist
+	// Directory requires the directory to exist
+	// +optional
+	// +kubebuilder:validation:Enum=DirectoryOrCreate;Directory;File;Socket;CharDevice;BlockDevice
+	Type *corev1.HostPathType `json:"type,omitempty"`
+
+	// NodeName specifies which node to use for HostPath storage
+	// If not specified, the download job can run on any node, and the
+	// BoundNodeName will be set in status after the job completes
+	// +optional
+	NodeName *string `json:"nodeName,omitempty"`
+}
+
+// RetainPolicy determines storage cleanup behavior
+// This is the policy if the PVC should be retained or deleted upon ModelRepository deletion, not the real backend PVC reclaim policy
+type RetainPolicy string
+
+const (
+	RetainPolicyDelete RetainPolicy = "Delete"
+	RetainPolicyRetain RetainPolicy = "Retain"
+)
 
 // ModelOrigin defines the type of model source origin.
 // +kubebuilder:validation:Enum=huggingface;gguf;local;ollama
@@ -148,6 +256,12 @@ type ModelRepositoryStatus struct {
 	// Conditions represent the latest available observations of the ModelRepository's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// BoundNodeName is the name of the node where the download job ran
+	// This is used for storage types that require node affinity (HostPath, ReadWriteOnce PVC)
+	// LLMEngine pods will be scheduled on this node to access the model files
+	// +optional
+	BoundNodeName string `json:"boundNodeName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

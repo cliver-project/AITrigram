@@ -1,0 +1,58 @@
+apiVersion: aitrigram.io/v1
+kind: AssetConfig
+metadata:
+  name: huggingface-default
+  origin: huggingface
+
+# Container image to run scripts in
+image: python:3.11-slim
+
+# Download job configuration
+download:
+  scriptFile: download.py
+  interpreter: python3
+
+  # Default environment variables
+  environment:
+    - name: HF_HOME
+      valueFrom: mountPath  # Special value - controller sets to mount path
+    - name: HF_HUB_CACHE
+      valueFrom: mountPath  # Special value - controller sets to mount path
+
+  # Secrets that may be needed (optional, user provides via CRD)
+  secretRefs:
+    - name: HF_TOKEN
+      optional: true
+      secretKey: token
+
+  # Resource requirements
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+# Cleanup job configuration
+cleanup:
+  scriptFile: cleanup.py
+  interpreter: python3
+
+  environment:
+    - name: HF_HOME
+      valueFrom: mountPath
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Volume mount configuration
+volumeMount:
+  defaultPath: /data/models
+  name: model-storage
+  readOnly: false  # For download/cleanup jobs

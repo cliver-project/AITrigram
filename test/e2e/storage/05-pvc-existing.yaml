@@ -1,0 +1,37 @@
+# Integration Test: Existing PVC
+# Prerequisites:
+# - Create the PVC manually first (see prep-existing-pvc.yaml)
+
+---
+# Step 1: Create PVC manually
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-existing-model-pvc
+  namespace: aitrigram-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-client  # Adjust to your storage class
+
+---
+# Step 2: Reference it in ModelRepository
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: test-existing-pvc-model
+spec:
+  source:
+    origin: huggingface
+    modelId: "hf-internal-testing/tiny-random-gpt2"
+  storage:
+    type: PersistentVolumeClaim
+    mountPath: /data/models
+    persistentVolumeClaim:
+      existingClaim: my-existing-model-pvc
+      size: "10Gi"  # Must match existing PVC size
+      accessMode: ReadWriteMany
+  autoDownload: true

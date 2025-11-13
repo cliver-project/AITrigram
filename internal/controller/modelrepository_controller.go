@@ -21,7 +21,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -36,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
+	"github.com/cliver-project/AITrigram/internal/controller/storage"
 )
 
 const (
@@ -47,6 +47,7 @@ type ModelRepositoryReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	OperatorNamespace string
+	StorageFactory    *storage.ProviderFactory
 }
 
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories,verbs=get;list;watch;create;update;patch;delete
@@ -54,6 +55,8 @@ type ModelRepositoryReconciler struct {
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 
 func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -75,9 +78,24 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Create storage provider early so it can be reused throughout reconciliation
+	provider, err := r.StorageFactory.CreateProvider(modelRepo)
+	if err != nil {
+		// During deletion, we still want to proceed even if provider creation fails
+		if modelRepo.GetDeletionTimestamp() != nil {
+			logger.Error(err, "Failed to create storage provider during deletion, will proceed with deletion")
+			return ctrl.Result{}, r.handleDeletion(ctx, modelRepo, nil)
+		}
+		// During normal operation, fail and requeue
+		logger.Error(err, "Failed to create storage provider")
+		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed,
+			"StorageProviderFailed", fmt.Sprintf("Failed to create storage provider: %v", err))
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	}
+
 	// Handle deletion
 	if modelRepo.GetDeletionTimestamp() != nil {
-		return ctrl.Result{}, r.handleDeletion(ctx, modelRepo)
+		return ctrl.Result{}, r.handleDeletion(ctx, modelRepo, provider)
 	}
 
 	// Add finalizer if not present
@@ -88,20 +106,37 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Validate PVC storage if using PersistentVolumeClaim
-	if modelRepo.Spec.Storage.PersistentVolumeClaim != nil {
-		if err := r.validatePVCStorage(ctx, modelRepo); err != nil {
-			// Check if it's a "PVC not bound" error - if so, just requeue without updating status to Failed
-			if strings.Contains(err.Error(), "not bound yet") {
-				logger.Info("PVC not bound yet, will retry", "error", err.Error())
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-			}
-			// For other validation errors (access mode, not found, etc.), mark as Failed
-			logger.Error(err, "PVC storage validation failed")
+	// Validate storage configuration
+	if err := provider.ValidateConfig(); err != nil {
+		logger.Error(err, "Storage configuration validation failed")
+		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed,
+			"StorageValidationFailed", fmt.Sprintf("Storage validation failed: %v", err))
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	}
+
+	// Provision storage if needed (for ProvisionableProvider)
+	if provisionable, ok := provider.(storage.ProvisionableProvider); ok {
+		namespace := r.OperatorNamespace
+		if namespace == "" {
+			namespace = "default"
+		}
+		if err := provisionable.CreateStorage(ctx, namespace); err != nil {
+			logger.Error(err, "Failed to provision storage")
 			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed,
-				"StorageValidationFailed", fmt.Sprintf("PVC storage validation failed: %v", err))
-			// Don't return error - just update status and requeue
+				"StorageProvisionFailed", fmt.Sprintf("Failed to provision storage: %v", err))
 			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		}
+
+		// Check storage status, in case of PVC storage, it tries to get the status of the PVC, others are typically just ready after CreateStorage
+		status, err := provisionable.GetStatus(ctx, namespace)
+		if err != nil {
+			logger.Error(err, "Failed to get storage status")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		if !status.Ready {
+			logger.Info("Storage not ready yet, will retry", "message", status.Message)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 	}
 
@@ -126,7 +161,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		// Create download job
-		job, err := r.createDownloadJob(ctx, modelRepo)
+		job, err := r.createDownloadJob(ctx, modelRepo, provider)
 		if err != nil {
 			logger.Error(err, "Failed to create download job")
 			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseFailed, "JobCreationFailed", fmt.Sprintf("Failed to create download job: %v", err))
@@ -161,6 +196,36 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{RequeueAfter: time.Second * 60}, nil
 		}
 
+		// For storage that requires node affinity, track which node the download job is running on
+		// job has been created, check if we need to update BoundNodeName
+		if nodeBound, ok := provider.(storage.NodeBoundProvider); ok && !nodeBound.IsShared() {
+			if modelRepo.Status.BoundNodeName == "" {
+				nodeName, err := r.getDownloadJobNodeName(ctx, modelRepo)
+				if err != nil {
+					logger.Error(err, "Failed to get download job node name")
+					// Retry after 10 seconds
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				} else if nodeName != "" {
+					// Update status with bound node name
+					if err := r.updateBoundNodeName(ctx, modelRepo, nodeName); err != nil {
+						logger.Error(err, "Failed to update bound node name")
+						return ctrl.Result{}, err
+					}
+					logger.Info("Successfully bound ModelRepository to node",
+						"modelRepo", modelRepo.Name,
+						"node", nodeName,
+						"storageType", provider.GetType())
+				} else {
+					// Node not yet assigned, retry after 10 seconds
+					logger.Info("Download job pod not yet scheduled to a node, will retry",
+						"modelRepo", modelRepo.Name,
+						"job", fmt.Sprintf("download-%s", modelRepo.Name),
+						"retryAfter", "10s")
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
+			}
+		}
+
 		// Check job completion
 		if job.Status.Succeeded > 0 {
 			if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.ModelRepositoryPhaseDownloaded, "Success", "Model successfully downloaded"); err != nil {
@@ -178,13 +243,13 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) (*batchv1.Job, error) {
+func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, provider storage.Provider) (*batchv1.Job, error) {
 	jobName := fmt.Sprintf("download-%s", modelRepo.Name)
 
-	// Build workload configuration using the new workload struct
-	workload, err := BuildModelRepositoryWorkload(modelRepo)
+	// Get volume and volume mount from provider
+	volume, volumeMount, err := provider.PrepareDownloadVolume()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build ModelRepository workload: %w", err)
+		return nil, fmt.Errorf("failed to prepare download volume: %w", err)
 	}
 
 	// Use operator namespace if available, otherwise fall back to default
@@ -193,57 +258,65 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		namespace = "default"
 	}
 
-	podSpec := corev1.PodSpec{
-		SecurityContext: &corev1.PodSecurityContext{
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
-		Containers: []corev1.Container{
-			{
-				Name:            "model-downloader",
-				Image:           workload.DownloadImage,
-				Command:         workload.DownloadCommand,
-				Args:            workload.DownloadArgs,
-				Env:             workload.Envs,
-				VolumeMounts:    workload.Storage.VolumeMounts,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: &[]bool{false}[0],
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-					},
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-				},
-			},
-		},
-		Volumes:       workload.Storage.Volumes,
-		RestartPolicy: corev1.RestartPolicyOnFailure,
+	// Get mount path from storage (use MountPath or default)
+	mountPath := modelRepo.Spec.Storage.MountPath
+	if mountPath == "" {
+		mountPath = "/data/models" // Default mount path
 	}
 
-	// Apply nodeSelector from ModelRepository spec if specified
-	if len(modelRepo.Spec.NodeSelector) > 0 {
-		podSpec.NodeSelector = modelRepo.Spec.NodeSelector
+	// Get node affinity if needed
+	var nodeAffinity *corev1.NodeAffinity
+	if nodeBound, ok := provider.(storage.NodeBoundProvider); ok {
+		nodeAffinity = nodeBound.GetNodeAffinity()
 	}
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: namespace,
-		},
-		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: podSpec,
-			},
-		},
+	// Create JobBuilder using the asset system
+	origin := string(modelRepo.Spec.Source.Origin)
+	builder, err := NewJobBuilder(
+		ctx,
+		r.Client,
+		origin,
+		mountPath,
+		volume,
+		volumeMount,
+		modelRepo.Spec.NodeSelector,
+		nodeAffinity,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job builder: %w", err)
+	}
+
+	// Prepare parameters for the download script
+	params := map[string]string{
+		"MODEL_ID":   modelRepo.Spec.Source.ModelId,
+		"MODEL_NAME": modelRepo.Spec.ModelName,
+		"MOUNT_PATH": mountPath,
+	}
+
+	// Add MODEL_NAME environment variable if needed (defaults to MODEL_ID for Ollama)
+	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
+		params["MODEL_NAME"] = modelRepo.Spec.Source.ModelId
+	}
+
+	// Build the download job using the asset system
+	// Pass existing CRD fields for customization
+	job, err := builder.BuildDownloadJob(
+		jobName,
+		namespace,
+		modelRepo.Name,
+		modelRepo.Spec.DownloadImage,
+		modelRepo.Spec.DownloadScripts,
+		params,
+		modelRepo.Spec.Source.HFTokenSecretRef,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download job: %w", err)
 	}
 
 	return job, nil
 }
 
-func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
+func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, provider storage.Provider) error {
 	logger := log.FromContext(ctx)
 
 	// Check if any LLMEngine still references this ModelRepository
@@ -280,11 +353,28 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 	// No dependencies - proceed with cleanup
 	logger.Info("No LLMEngine dependencies found, proceeding with deletion")
 
-	// Create a cleanup job to delete the model files from the storage
-	if err := r.createCleanupJob(ctx, modelRepo); err != nil {
-		logger.Error(err, "Failed to create cleanup job, will still remove finalizer")
-		// We still want to remove the finalizer even if cleanup fails
-		// to avoid blocking deletion, but log the error
+	// Only proceed with cleanup if provider was successfully created
+	if provider != nil {
+		// Create a cleanup job to delete the model files from the storage
+		if err := r.createCleanupJob(ctx, modelRepo, provider); err != nil {
+			logger.Error(err, "Failed to create cleanup job, will still remove finalizer")
+			// We still want to remove the finalizer even if cleanup fails
+			// to avoid blocking deletion, but log the error
+		}
+
+		// Cleanup storage if provider supports it
+		if provisionable, ok := provider.(storage.ProvisionableProvider); ok {
+			namespace := r.OperatorNamespace
+			if namespace == "" {
+				namespace = "default"
+			}
+			if err := provisionable.Cleanup(ctx, namespace); err != nil {
+				logger.Error(err, "Failed to cleanup storage, will still remove finalizer")
+				// Continue with deletion even if cleanup fails
+			}
+		}
+	} else {
+		logger.Info("Provider is nil, skipping cleanup job and storage cleanup")
 	}
 
 	// Remove finalizer with retry to handle conflicts
@@ -302,13 +392,13 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 	})
 }
 
-func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
+func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, provider storage.Provider) error {
 	jobName := fmt.Sprintf("cleanup-%s", modelRepo.Name)
 
-	// Build workload configuration using the new workload struct
-	workload, err := BuildModelRepositoryWorkload(modelRepo)
+	// Get volume and volume mount from provider (same as download)
+	volume, volumeMount, err := provider.PrepareDownloadVolume()
 	if err != nil {
-		return fmt.Errorf("failed to build ModelRepository workload: %w", err)
+		return fmt.Errorf("failed to prepare cleanup volume: %w", err)
 	}
 
 	// Use operator namespace if available, otherwise fall back to default
@@ -317,50 +407,59 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		namespace = "default"
 	}
 
-	cleanupPodSpec := corev1.PodSpec{
-		SecurityContext: &corev1.PodSecurityContext{
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
-		Containers: []corev1.Container{
-			{
-				Name:            "cleanup",
-				Image:           workload.CleanupImage,
-				Command:         workload.CleanupCommand,
-				Args:            workload.CleanupArgs,
-				VolumeMounts:    workload.Storage.VolumeMounts,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: &[]bool{false}[0],
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-					},
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-				},
-			},
-		},
-		Volumes:       workload.Storage.Volumes,
-		RestartPolicy: corev1.RestartPolicyOnFailure,
+	// Get mount path from storage (use MountPath or default)
+	mountPath := modelRepo.Spec.Storage.MountPath
+	if mountPath == "" {
+		mountPath = "/data/models" // Default mount path
 	}
 
-	// Apply nodeSelector from ModelRepository spec if specified
-	if len(modelRepo.Spec.NodeSelector) > 0 {
-		cleanupPodSpec.NodeSelector = modelRepo.Spec.NodeSelector
+	// Get node affinity if needed
+	var nodeAffinity *corev1.NodeAffinity
+	if nodeBound, ok := provider.(storage.NodeBoundProvider); ok {
+		nodeAffinity = nodeBound.GetNodeAffinity()
 	}
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: namespace,
-		},
-		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: cleanupPodSpec,
-			},
-		},
+	// Create JobBuilder using the asset system
+	origin := string(modelRepo.Spec.Source.Origin)
+	builder, err := NewJobBuilder(
+		ctx,
+		r.Client,
+		origin,
+		mountPath,
+		volume,
+		volumeMount,
+		modelRepo.Spec.NodeSelector,
+		nodeAffinity,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create job builder: %w", err)
+	}
+
+	// Prepare parameters for the cleanup script
+	params := map[string]string{
+		"MODEL_ID":   modelRepo.Spec.Source.ModelId,
+		"MODEL_NAME": modelRepo.Spec.ModelName,
+		"MOUNT_PATH": mountPath,
+	}
+
+	// Add MODEL_NAME environment variable if needed (defaults to MODEL_ID for Ollama)
+	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
+		params["MODEL_NAME"] = modelRepo.Spec.Source.ModelId
+	}
+
+	// Build the cleanup job using the asset system
+	// Pass existing CRD fields for customization
+	job, err := builder.BuildCleanupJob(
+		jobName,
+		namespace,
+		modelRepo.Name,
+		modelRepo.Spec.DownloadImage, // Reuse download image for cleanup
+		modelRepo.Spec.DeleteScripts,
+		params,
+		modelRepo.Spec.Source.HFTokenSecretRef,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to build cleanup job: %w", err)
 	}
 
 	// Create the cleanup job (don't set owner reference as the owner is being deleted)
@@ -387,58 +486,70 @@ func (r *ModelRepositoryReconciler) updateModelRepoStatus(ctx context.Context, m
 	})
 }
 
-// validatePVCStorage validates that the PVC exists and has appropriate access modes
-func (r *ModelRepositoryReconciler) validatePVCStorage(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) error {
+// updateBoundNodeName updates the BoundNodeName field in the ModelRepository status
+func (r *ModelRepositoryReconciler) updateBoundNodeName(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, nodeName string) error {
+	logger := log.FromContext(ctx)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the resource
+		key := client.ObjectKeyFromObject(modelRepo)
+		fresh := &aitrigramv1.ModelRepository{}
+		if err := r.Get(ctx, key, fresh); err != nil {
+			return err
+		}
+
+		// Update bound node name on the fresh copy
+		fresh.Status.BoundNodeName = nodeName
+		logger.Info("Setting bound node name",
+			"modelRepo", modelRepo.Name,
+			"nodeName", nodeName)
+
+		return r.Status().Update(ctx, fresh)
+	})
+}
+
+// getDownloadJobNodeName retrieves the node name where the download job pod is running
+// Returns empty string if the pod is not yet scheduled or not found
+func (r *ModelRepositoryReconciler) getDownloadJobNodeName(ctx context.Context, modelRepo *aitrigramv1.ModelRepository) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Get PVC name
-	pvcName := modelRepo.Spec.Storage.PersistentVolumeClaim.ClaimName
-	if pvcName == "" {
-		return fmt.Errorf("PersistentVolumeClaim claimName is required")
+	jobName := fmt.Sprintf("download-%s", modelRepo.Name)
+	namespace := r.OperatorNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
 
-	// Fetch the PVC from the operator's namespace
-	pvc := &corev1.PersistentVolumeClaim{}
-	pvcKey := client.ObjectKey{
-		Name:      pvcName,
-		Namespace: r.OperatorNamespace,
-	}
-
-	if err := r.Get(ctx, pvcKey, pvc); err != nil {
+	// Get the Job
+	job := &batchv1.Job{}
+	if err := r.Get(ctx, client.ObjectKey{Name: jobName, Namespace: namespace}, job); err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("PersistentVolumeClaim %s not found in namespace %s", pvcName, r.OperatorNamespace)
+			logger.Info("Download job not found", "job", jobName)
+			return "", nil
 		}
-		return fmt.Errorf("failed to get PersistentVolumeClaim: %w", err)
+		return "", fmt.Errorf("failed to get download job: %w", err)
 	}
 
-	// Check access modes - only ReadWriteMany is supported
-	hasReadWriteMany := false
-	for _, mode := range pvc.Spec.AccessModes {
-		if mode == corev1.ReadWriteMany {
-			hasReadWriteMany = true
-			break
+	// List pods owned by this job
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{
+		"job-name": jobName,
+	}); err != nil {
+		return "", fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
+	}
+
+	// Find a pod that has been scheduled (has a node assignment)
+	for _, pod := range podList.Items {
+		if pod.Spec.NodeName != "" {
+			logger.Info("Found download job pod node",
+				"job", jobName,
+				"pod", pod.Name,
+				"node", pod.Spec.NodeName,
+				"phase", pod.Status.Phase)
+			return pod.Spec.NodeName, nil
 		}
 	}
 
-	if !hasReadWriteMany {
-		return fmt.Errorf("PersistentVolumeClaim %s must have ReadWriteMany access mode for shared access between download job and LLMEngine pods. Current modes: %v. Use ReadWriteMany PVC or consider using HostPath with nodeSelector for single-node clusters", pvcName, pvc.Spec.AccessModes)
-	}
-
-	// Check if PVC is bound - warn if not, but don't fail
-	if pvc.Status.Phase != corev1.ClaimBound {
-		logger.Info("PVC is not bound yet, will retry",
-			"pvc", pvcName,
-			"currentPhase", pvc.Status.Phase,
-			"retryAfter", "10s")
-		return fmt.Errorf("PVC not bound yet (phase: %s), will retry in 10 seconds", pvc.Status.Phase)
-	}
-
-	logger.Info("PVC storage validation passed",
-		"pvc", pvcName,
-		"accessModes", pvc.Spec.AccessModes,
-		"phase", pvc.Status.Phase)
-
-	return nil
+	logger.Info("Download job pod not yet scheduled to a node", "job", jobName)
+	return "", nil
 }
 
 func (r *ModelRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {

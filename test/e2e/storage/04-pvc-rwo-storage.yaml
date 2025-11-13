@@ -1,0 +1,21 @@
+# Integration Test: PVC with ReadWriteOnce
+# Prerequisites:
+# - Storage class that supports RWO (default in most clusters)
+# - Model download and serving pods will be pinned to same node
+
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: test-pvc-rwo-model
+spec:
+  source:
+    origin: huggingface
+    modelId: "hf-internal-testing/tiny-random-gpt2"
+  storage:
+    type: PersistentVolumeClaim
+    mountPath: /data/models
+    persistentVolumeClaim:
+      size: "10Gi"
+      accessMode: ReadWriteOnce
+      storageClassName: "standard"  # Adjust to your RWO storage class
+  autoDownload: true

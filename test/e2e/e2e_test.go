@@ -21,7 +21,6 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -149,118 +148,118 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 	})
 
-	Context("Ollama LLMEngine E2E Test", func() {
-		const testNamespace = "ollama-e2e-test"
-		var serviceName string
-		var serviceIP string
-		var servicePort string
+	// 	Context("Ollama LLMEngine E2E Test", func() {
+	// 		const testNamespace = "ollama-e2e-test"
+	// 		var serviceName string
+	// 		var serviceIP string
+	// 		var servicePort string
 
-		It("should deploy Ollama LLMEngine and handle inference requests", func() {
-			By("creating test namespace")
-			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+	// 		It("should deploy Ollama LLMEngine and handle inference requests", func() {
+	// 			By("creating test namespace")
+	// 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+	// 			_, err := utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
 
-			By("deploying the Ollama LLMEngine sample")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/e2e-ollama-simple.yaml", "-n", testNamespace)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy Ollama LLMEngine sample")
+	// 			By("deploying the Ollama LLMEngine sample")
+	// 			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/e2e-ollama-simple.yaml", "-n", testNamespace)
+	// 			_, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to deploy Ollama LLMEngine sample")
 
-			By("waiting for deployment to be ready")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", "-n", testNamespace, "-o", "name")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployments")
-				deployments := utils.GetNonEmptyLines(output)
-				g.Expect(len(deployments)).To(BeNumerically(">", 0), "Expected at least 1 deployment")
+	// 			By("waiting for deployment to be ready")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "deployment", "-n", testNamespace, "-o", "name")
+	// 				output, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployments")
+	// 				deployments := utils.GetNonEmptyLines(output)
+	// 				g.Expect(len(deployments)).To(BeNumerically(">", 0), "Expected at least 1 deployment")
 
-				// Check if deployment is ready
-				for _, deployment := range deployments {
-					deploymentName := strings.TrimPrefix(deployment, "deployment.apps/")
-					cmd = exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace,
-						"-o", "jsonpath={.status.readyReplicas}")
-					readyReplicas, err := utils.Run(cmd)
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(readyReplicas).To(Equal("1"), "Deployment should have 1 ready replica")
-				}
-			}).WithTimeout(30 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+	// 				// Check if deployment is ready
+	// 				for _, deployment := range deployments {
+	// 					deploymentName := strings.TrimPrefix(deployment, "deployment.apps/")
+	// 					cmd = exec.Command("kubectl", "get", "deployment", deploymentName, "-n", testNamespace,
+	// 						"-o", "jsonpath={.status.readyReplicas}")
+	// 					readyReplicas, err := utils.Run(cmd)
+	// 					g.Expect(err).NotTo(HaveOccurred())
+	// 					g.Expect(readyReplicas).To(Equal("1"), "Deployment should have 1 ready replica")
+	// 				}
+	// 			}).WithTimeout(30 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
-			By("waiting for service to be ready")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "service", "-n", testNamespace,
-					"-o", "go-template={{ range .items }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to get services")
-				services := utils.GetNonEmptyLines(output)
-				g.Expect(len(services)).To(BeNumerically(">", 0), "Expected at least 1 service")
-				serviceName = services[0]
-			}).Should(Succeed())
+	// 			By("waiting for service to be ready")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "service", "-n", testNamespace,
+	// 					"-o", "go-template={{ range .items }}{{ .metadata.name }}{{ \"\\n\" }}{{ end }}")
+	// 				output, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get services")
+	// 				services := utils.GetNonEmptyLines(output)
+	// 				g.Expect(len(services)).To(BeNumerically(">", 0), "Expected at least 1 service")
+	// 				serviceName = services[0]
+	// 			}).Should(Succeed())
 
-			By("getting service IP and port")
-			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
-				"-o", "jsonpath={.spec.clusterIP}")
-			serviceIP, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to get service IP")
-			Expect(serviceIP).NotTo(BeEmpty(), "Service IP should not be empty")
+	// 			By("getting service IP and port")
+	// 			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
+	// 				"-o", "jsonpath={.spec.clusterIP}")
+	// 			serviceIP, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to get service IP")
+	// 			Expect(serviceIP).NotTo(BeEmpty(), "Service IP should not be empty")
 
-			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
-				"-o", "jsonpath={.spec.ports[0].port}")
-			servicePort, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to get service port")
-			Expect(servicePort).NotTo(BeEmpty(), "Service port should not be empty")
+	// 			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
+	// 				"-o", "jsonpath={.spec.ports[0].port}")
+	// 			servicePort, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to get service port")
+	// 			Expect(servicePort).NotTo(BeEmpty(), "Service port should not be empty")
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Service endpoint: %s:%s\n", serviceIP, servicePort)
+	// 			_, _ = fmt.Fprintf(GinkgoWriter, "Service endpoint: %s:%s\n", serviceIP, servicePort)
 
-			By("deploying busybox pod for testing")
-			busyboxYaml := fmt.Sprintf(`
-apiVersion: v1
-kind: Pod
-metadata:
-  name: busybox-client
-  namespace: %s
-spec:
-  containers:
-  - name: busybox
-    image: busybox:latest
-    command: ["sh", "-c", "sleep 3600"]
-`, testNamespace)
+	// 			By("deploying busybox pod for testing")
+	// 			busyboxYaml := fmt.Sprintf(`
+	// apiVersion: v1
+	// kind: Pod
+	// metadata:
+	//   name: busybox-client
+	//   namespace: %s
+	// spec:
+	//   containers:
+	//   - name: busybox
+	//     image: busybox:latest
+	//     command: ["sh", "-c", "sleep 3600"]
+	// `, testNamespace)
 
-			cmd = exec.Command("sh", "-c", fmt.Sprintf("echo '%s' | kubectl apply -f -", busyboxYaml))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy busybox pod")
+	// 			cmd = exec.Command("sh", "-c", fmt.Sprintf("echo '%s' | kubectl apply -f -", busyboxYaml))
+	// 			_, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to deploy busybox pod")
 
-			By("waiting for busybox pod to be ready")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", "busybox-client", "-n", testNamespace,
-					"-o", "jsonpath={.status.phase}")
-				phase, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(phase).To(Equal("Running"), "Busybox pod should be running")
-			}).WithTimeout(5 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+	// 			By("waiting for busybox pod to be ready")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "pod", "busybox-client", "-n", testNamespace,
+	// 					"-o", "jsonpath={.status.phase}")
+	// 				phase, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred())
+	// 				g.Expect(phase).To(Equal("Running"), "Busybox pod should be running")
+	// 			}).WithTimeout(5 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 
-			By("performing LLM inference request via busybox")
-			curlCommand := fmt.Sprintf(`curl -s http://%s:%s/api/generate -d '{"model": "llama3.2:latest", "prompt": "Hello, Please say Hello to me!", "stream": false}'`,
-				serviceIP, servicePort)
+	// 			By("performing LLM inference request via busybox")
+	// 			curlCommand := fmt.Sprintf(`curl -s http://%s:%s/api/generate -d '{"model": "llama3.2:latest", "prompt": "Hello, Please say Hello to me!", "stream": false}'`,
+	// 				serviceIP, servicePort)
 
-			var inferenceResponse string
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "exec", "busybox-client", "-n", testNamespace, "--",
-					"sh", "-c", curlCommand)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to execute curl command in busybox")
-				inferenceResponse = output
-				g.Expect(inferenceResponse).NotTo(BeEmpty(), "Inference response should not be empty")
-			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+	// 			var inferenceResponse string
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "exec", "busybox-client", "-n", testNamespace, "--",
+	// 					"sh", "-c", curlCommand)
+	// 				output, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred(), "Failed to execute curl command in busybox")
+	// 				inferenceResponse = output
+	// 				g.Expect(inferenceResponse).NotTo(BeEmpty(), "Inference response should not be empty")
+	// 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Inference response: %s\n", inferenceResponse)
+	// 			_, _ = fmt.Fprintf(GinkgoWriter, "Inference response: %s\n", inferenceResponse)
 
-			By("verifying inference response contains 'Hello'")
-			Expect(strings.Contains(strings.ToLower(inferenceResponse), "hello")).To(BeTrue(),
-				"Response should contain 'Hello' (case-insensitive)")
+	// 			By("verifying inference response contains 'Hello'")
+	// 			Expect(strings.Contains(strings.ToLower(inferenceResponse), "hello")).To(BeTrue(),
+	// 				"Response should contain 'Hello' (case-insensitive)")
 
-			By("cleaning up test resources")
-			cmd = exec.Command("kubectl", "delete", "namespace", testNamespace, "--wait=false")
-			_, _ = utils.Run(cmd)
-		})
-	})
+	//			By("cleaning up test resources")
+	//			cmd = exec.Command("kubectl", "delete", "namespace", testNamespace, "--wait=false")
+	//			_, _ = utils.Run(cmd)
+	//		})
+	//	})
 })

@@ -70,11 +70,11 @@ type StoragePaths struct {
 // between where the model was downloaded and where the engine will look for it
 // Cache paths are determined by buildCacheVolumes, respecting custom cache configuration
 func GetStoragePaths(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) StoragePaths {
-	// Use the ModelRepository's storage path as the model path
+	// Use the ModelRepository's storage mount path as the model path
 	// This ensures the LLMEngine mounts at the same location where models were downloaded
 	modelPath := DefaultModelStoragePath
-	if modelRepo != nil && modelRepo.Spec.Storage.Path != "" {
-		modelPath = modelRepo.Spec.Storage.Path
+	if modelRepo != nil && modelRepo.Spec.Storage.MountPath != "" {
+		modelPath = modelRepo.Spec.Storage.MountPath
 	}
 
 	// Get cache paths from buildCacheVolumes which respects custom cache configuration
@@ -112,6 +112,49 @@ func detectGPURequest(llmEngine *aitrigramv1.LLMEngine) bool {
 
 // buildCacheVolumes creates cache volume mounts and volumes for an engine
 // For vLLM/HuggingFace: Creates per-pod local caches for runtime data
+// getStorageVolumeSource extracts volume source from ModelStorage
+// This is a temporary helper for backward compatibility during Phase 1
+// Will be replaced by proper storage provider integration in Phase 3
+func getStorageVolumeSource(storage *aitrigramv1.ModelStorage) (corev1.VolumeSource, error) {
+	if storage == nil {
+		return corev1.VolumeSource{}, fmt.Errorf("storage is nil")
+	}
+
+	switch storage.Type {
+	case aitrigramv1.StorageTypePVC:
+		if storage.PersistentVolumeClaim == nil || storage.PersistentVolumeClaim.ExistingClaim == nil {
+			return corev1.VolumeSource{}, fmt.Errorf("PVC storage requires existingClaim for cache")
+		}
+		return corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: *storage.PersistentVolumeClaim.ExistingClaim,
+			},
+		}, nil
+	case aitrigramv1.StorageTypeNFS:
+		if storage.NFS == nil {
+			return corev1.VolumeSource{}, fmt.Errorf("NFS storage spec is required")
+		}
+		return corev1.VolumeSource{
+			NFS: &corev1.NFSVolumeSource{
+				Server: storage.NFS.Server,
+				Path:   storage.NFS.Path,
+			},
+		}, nil
+	case aitrigramv1.StorageTypeHostPath:
+		if storage.HostPath == nil {
+			return corev1.VolumeSource{}, fmt.Errorf("HostPath storage spec is required")
+		}
+		return corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: storage.HostPath.Path,
+				Type: storage.HostPath.Type,
+			},
+		}, nil
+	default:
+		return corev1.VolumeSource{}, fmt.Errorf("unsupported storage type for cache: %s", storage.Type)
+	}
+}
+
 // For Ollama: Creates per-pod caches
 // If llmEngine.Spec.Cache is specified, it can be used for custom cache configuration
 // Returns volume mounts, volumes, and updated cache paths for environment variables
@@ -129,15 +172,26 @@ func buildCacheVolumes(llmEngine *aitrigramv1.LLMEngine) ([]corev1.VolumeMount, 
 		// vLLM local cache directory (per-pod, for runtime data)
 		if customCache != nil {
 			// Use custom cache for vLLM cache directory
+			mountPath := customCache.MountPath
+			if mountPath == "" {
+				mountPath = VLLMCacheDir
+			}
+			volumeSource, err := getStorageVolumeSource(customCache)
+			if err != nil {
+				// Fall back to emptyDir if custom cache configuration is invalid
+				volumeSource = corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}
+			}
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{
 				Name:      "vllm-cache",
-				MountPath: customCache.Path,
+				MountPath: mountPath,
 			})
 			volumes = append(volumes, corev1.Volume{
 				Name:         "vllm-cache",
-				VolumeSource: customCache.VolumeSource,
+				VolumeSource: volumeSource,
 			})
-			cachePaths["VLLM_CACHE_DIR"] = customCache.Path
+			cachePaths["VLLM_CACHE_DIR"] = mountPath
 		} else {
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{
 				Name:      "vllm-cache",
@@ -221,15 +275,26 @@ func buildCacheVolumes(llmEngine *aitrigramv1.LLMEngine) ([]corev1.VolumeMount, 
 
 		// Ollama KV cache - use custom cache if specified, otherwise EmptyDir
 		if customCache != nil {
+			mountPath := customCache.MountPath
+			if mountPath == "" {
+				mountPath = OllamaKVCachePath
+			}
+			volumeSource, err := getStorageVolumeSource(customCache)
+			if err != nil {
+				// Fall back to emptyDir if custom cache configuration is invalid
+				volumeSource = corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}
+			}
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{
 				Name:      "kv-cache",
-				MountPath: customCache.Path,
+				MountPath: mountPath,
 			})
 			volumes = append(volumes, corev1.Volume{
 				Name:         "kv-cache",
-				VolumeSource: customCache.VolumeSource,
+				VolumeSource: volumeSource,
 			})
-			cachePaths["OLLAMA_KV_CACHE_DIR"] = customCache.Path
+			cachePaths["OLLAMA_KV_CACHE_DIR"] = mountPath
 		} else {
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{
 				Name:      "ollama-kv-cache",
@@ -305,169 +370,6 @@ func mergeEnvVars(defaultEnv, userEnv []corev1.EnvVar) []corev1.EnvVar {
 	}
 
 	return result
-}
-
-// buildHuggingFaceDownloadScript returns the default HuggingFace download script
-func buildHuggingFaceDownloadScript() string {
-	return `#!/usr/bin/env python3
-import os
-from huggingface_hub import snapshot_download
-
-model_id = "{{ ModelId }}"
-model_name = "{{ ModelName }}"
-mount_path = "{{ MountPath }}"
-target_path = os.path.join(mount_path, model_name)
-
-print(f"Downloading model {model_id} to {target_path}...")
-
-# Check if HF_TOKEN is available in environment
-hf_token = os.environ.get("HF_TOKEN", "")
-
-try:
-    snapshot_download(
-        repo_id=model_id,
-        local_dir=target_path,
-        local_dir_use_symlinks=False,
-        token=hf_token,
-    )
-    print("Download completed successfully")
-except Exception as e:
-    print(f"Error downloading model: {e}")
-    exit(1)
-`
-}
-
-// buildDefaultDownloadScript returns the default download script based on the model origin
-func buildDefaultDownloadScript(origin aitrigramv1.ModelOrigin) string {
-	switch origin {
-	case aitrigramv1.ModelOriginHuggingFace:
-		return buildHuggingFaceDownloadScript()
-	case aitrigramv1.ModelOriginOllama:
-		// Bash script using ollama
-		// Note: ollama pull requires the ollama server to be running
-		return `
-set -ex
-
-# Start ollama server in the background
-echo "Starting ollama server..."
-ollama serve > /tmp/ollama.log 2>&1 &
-OLLAMA_PID=$!
-
-# Wait for ollama server to be ready
-echo "Waiting for ollama server to be ready..."
-for i in $(seq 1 30); do
-  if ollama list > /dev/null 2>&1; then
-    echo "Ollama server is ready"
-    break
-  fi
-  if [ $i -eq 30 ]; then
-    echo "Timeout waiting for ollama server to start"
-    cat /tmp/ollama.log
-    exit 1
-  fi
-  sleep 1
-done
-
-# Pull the model
-echo "Pulling model {{ ModelId }} using ollama..."
-ollama pull {{ ModelId }}
-
-# Stop the ollama server
-echo "Stopping ollama server..."
-kill $OLLAMA_PID || true
-wait $OLLAMA_PID 2>/dev/null || true
-
-echo "Model pull completed successfully"
-echo "Model is stored in OLLAMA_MODELS directory"
-`
-	case aitrigramv1.ModelOriginGGUF:
-		// Bash script using curl
-		return `
-set -e
-echo "Downloading GGUF model {{ ModelId }} to {{ MountPath }}/{{ ModelName }}..."
-mkdir -p {{ MountPath }}/{{ ModelName }}
-curl -L {{ ModelId }} -o {{ MountPath }}/{{ ModelName }}/model.gguf
-echo "Download completed successfully"
-`
-	case aitrigramv1.ModelOriginLocal:
-		// Simple bash script for local models
-		return `
-echo "Local model source - no download needed"
-echo "Model should already be available at {{ MountPath }}"
-ls -la {{ MountPath }}
-`
-	default:
-		// Default to HuggingFace Python script
-		return buildHuggingFaceDownloadScript()
-	}
-}
-
-// buildDefaultDeleteScript returns the default delete script based on the model origin
-func buildDefaultDeleteScript(origin aitrigramv1.ModelOrigin) string {
-	switch origin {
-	case aitrigramv1.ModelOriginHuggingFace:
-		// Bash script to remove HuggingFace model directory
-		return `
-set -e
-echo "Deleting HuggingFace model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	case aitrigramv1.ModelOriginOllama:
-		// Bash script using ollama rm command
-		return `
-set -ex
-echo "Deleting Ollama model {{ ModelId }}..."
-if ollama list | grep -q "{{ ModelId }}"; then
-  ollama rm {{ ModelId }}
-  echo "Ollama model {{ ModelId }} deleted successfully"
-else
-  echo "Ollama model {{ ModelId }} not found, nothing to delete"
-fi
-
-# Also clean up local storage if exists
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  echo "Removing model files from {{ MountPath }}/{{ ModelName }}..."
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model files deleted"
-fi
-`
-	case aitrigramv1.ModelOriginGGUF:
-		// Bash script to remove GGUF model directory
-		return `
-set -e
-echo "Deleting GGUF model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	case aitrigramv1.ModelOriginLocal:
-		// For local models, just log - don't delete by default
-		return `
-echo "Local model source - skipping deletion of {{ MountPath }}/{{ ModelName }}"
-echo "If you want to delete local models, provide custom deleteScripts"
-ls -la {{ MountPath }} || true
-`
-	default:
-		// Default to removing directory
-		return `
-set -e
-echo "Deleting model {{ ModelName }} from {{ MountPath }}..."
-if [ -d "{{ MountPath }}/{{ ModelName }}" ]; then
-  rm -rf {{ MountPath }}/{{ ModelName }}
-  echo "Model directory {{ MountPath }}/{{ ModelName }} deleted successfully"
-else
-  echo "Model directory {{ MountPath }}/{{ ModelName }} not found, nothing to delete"
-fi
-`
-	}
 }
 
 // getDefaultGPUNodeSelector returns the default node selector based on GPU type

@@ -27,45 +27,6 @@ import (
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 )
 
-// ModelRepositoryWorkload holds all data needed for model downloading and cleanup workloads
-type ModelRepositoryWorkload struct {
-	// DownloadImage is the container image used for downloading the model
-	// Defaults to different images based on model origin
-	DownloadImage string
-
-	// CleanupImage is the container image used for cleanup
-	// Usually the same as DownloadImage or a minimal shell image
-	CleanupImage string
-
-	// DownloadScript is the rendered script content for downloading the model
-	DownloadScript string
-
-	// CleanupScript is the rendered script content for cleaning up the model
-	CleanupScript string
-
-	// Storage contains volume and volumeMount for model storage
-	Storage StorageConfig
-
-	// Envs contains environment variables for download/cleanup jobs
-	Envs []corev1.EnvVar
-
-	// DownloadCommand overrides the container's ENTRYPOINT for download job
-	// If empty, uses the container's default ENTRYPOINT
-	DownloadCommand []string
-
-	// DownloadArgs are the command arguments to execute the download script
-	// These override the container's CMD or are passed to ENTRYPOINT
-	DownloadArgs []string
-
-	// CleanupCommand overrides the container's ENTRYPOINT for cleanup job
-	// If empty, uses the container's default ENTRYPOINT
-	CleanupCommand []string
-
-	// CleanupArgs are the command arguments to execute the cleanup script
-	// These override the container's CMD or are passed to ENTRYPOINT
-	CleanupArgs []string
-}
-
 // LLMEngineWorkload holds all data needed for LLM inference deployment
 type LLMEngineWorkload struct {
 	// Image is the container image for the LLM engine
@@ -111,152 +72,6 @@ type StorageConfig struct {
 	VolumeMounts []corev1.VolumeMount
 }
 
-// BuildModelRepositoryWorkload constructs a ModelRepositoryWorkload for a given ModelRepository
-func BuildModelRepositoryWorkload(modelRepo *aitrigramv1.ModelRepository) (*ModelRepositoryWorkload, error) {
-	workload := &ModelRepositoryWorkload{}
-
-	// Determine download image based on origin
-	workload.DownloadImage = modelRepo.Spec.DownloadImage
-	if workload.DownloadImage == "" {
-		switch modelRepo.Spec.Source.Origin {
-		case aitrigramv1.ModelOriginHuggingFace:
-			workload.DownloadImage = DefaultVLLMImage
-		case aitrigramv1.ModelOriginOllama:
-			workload.DownloadImage = DefaultOllamaImage
-		case aitrigramv1.ModelOriginGGUF:
-			workload.DownloadImage = "python:3.11-slim"
-		default:
-			// python image as default for custom scripts
-			workload.DownloadImage = "python:3.11-slim"
-		}
-	}
-
-	// Determine cleanup image
-	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
-		workload.CleanupImage = DefaultOllamaImage
-	} else if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginHuggingFace {
-		workload.CleanupImage = DefaultVLLMImage
-	} else {
-		workload.CleanupImage = "python:3.11-slim"
-	}
-
-	// Build download script
-	downloadScriptTemplate := modelRepo.Spec.DownloadScripts
-	if downloadScriptTemplate == "" {
-		downloadScriptTemplate = buildDefaultDownloadScript(modelRepo.Spec.Source.Origin)
-	}
-
-	renderer := NewTemplateRenderer()
-	downloadScript, err := renderer.RenderModelScript(
-		downloadScriptTemplate,
-		modelRepo.Spec.Source.ModelId,
-		modelRepo.Spec.ModelName,
-		modelRepo.Spec.Storage.Path,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render download script: %w", err)
-	}
-	workload.DownloadScript = downloadScript
-
-	// Build cleanup script
-	cleanupScriptTemplate := modelRepo.Spec.DeleteScripts
-	if cleanupScriptTemplate == "" {
-		cleanupScriptTemplate = buildDefaultDeleteScript(modelRepo.Spec.Source.Origin)
-	}
-
-	cleanupScript, err := renderer.RenderModelScript(
-		cleanupScriptTemplate,
-		modelRepo.Spec.Source.ModelId,
-		modelRepo.Spec.ModelName,
-		modelRepo.Spec.Storage.Path,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render cleanup script: %w", err)
-	}
-	workload.CleanupScript = cleanupScript
-
-	// Build storage configuration
-	workload.Storage = StorageConfig{
-		Volumes: []corev1.Volume{
-			{
-				Name: "model-storage",
-				// Storage from ModelRepository spec is required, so no need to check for nil
-				VolumeSource: modelRepo.Spec.Storage.VolumeSource,
-			},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name: "model-storage",
-				// Storage from ModelRepository spec is required, so no need to check for nil
-				MountPath: modelRepo.Spec.Storage.Path,
-			},
-		},
-	}
-
-	// Build environment variables based on origin
-	var envVars []corev1.EnvVar
-
-	// HuggingFace: Add HF_TOKEN if provided
-	if modelRepo.Spec.Source.HFTokenSecretRef != nil && modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginHuggingFace {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "HF_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: modelRepo.Spec.Source.HFTokenSecretRef,
-			},
-		})
-	}
-
-	// Ollama: Set OLLAMA_MODELS, OLLAMA_CACHE, and OLLAMA_HOME
-	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
-		envVars = append(envVars,
-			corev1.EnvVar{
-				Name:  "OLLAMA_MODELS",
-				Value: modelRepo.Spec.Storage.Path,
-			},
-			corev1.EnvVar{
-				Name:  "OLLAMA_CACHE",
-				Value: modelRepo.Spec.Storage.Path + "_cache",
-			},
-			corev1.EnvVar{
-				Name:  "OLLAMA_HOME",
-				Value: modelRepo.Spec.Storage.Path + "/.ollama",
-			},
-		)
-	}
-	workload.Envs = envVars
-
-	// Build download command and args based on script type
-	// We override the container's ENTRYPOINT with Command and pass the script via Args
-	downloadScriptType := DetectScriptType(downloadScript)
-	switch downloadScriptType {
-	case ScriptTypePython:
-		workload.DownloadCommand = []string{"python3"}
-		workload.DownloadArgs = []string{"-c", downloadScript}
-	case ScriptTypeBash:
-		workload.DownloadCommand = []string{"/bin/sh"}
-		workload.DownloadArgs = []string{"-c", downloadScript}
-	default:
-		workload.DownloadCommand = []string{"/bin/sh"}
-		workload.DownloadArgs = []string{"-c", downloadScript}
-	}
-
-	// Build cleanup command and args based on script type
-	cleanupScriptType := DetectScriptType(cleanupScript)
-	switch cleanupScriptType {
-	case ScriptTypePython:
-		workload.CleanupCommand = []string{"python3"}
-		workload.CleanupArgs = []string{"-c", cleanupScript}
-	case ScriptTypeBash:
-		workload.CleanupCommand = []string{"/bin/sh"}
-		workload.CleanupArgs = []string{"-c", cleanupScript}
-	default:
-		workload.CleanupCommand = []string{"/bin/sh"}
-		workload.CleanupArgs = []string{"-c", cleanupScript}
-	}
-
-	return workload, nil
-}
-
 // BuildLLMEngineWorkload constructs an LLMEngineWorkload for a given LLMEngine and ModelRepository
 func BuildLLMEngineWorkload(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) (*LLMEngineWorkload, error) {
 	workload := &LLMEngineWorkload{}
@@ -297,11 +112,16 @@ func BuildLLMEngineWorkload(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigr
 	storagePaths := GetStoragePaths(llmEngine, modelRepo)
 
 	// Build storage configuration with model storage (read-only)
+	volumeSource, err := getStorageVolumeSource(&modelRepo.Spec.Storage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage volume source: %w", err)
+	}
+
 	workload.Storage = StorageConfig{
 		Volumes: []corev1.Volume{
 			{
 				Name:         "model-storage",
-				VolumeSource: modelRepo.Spec.Storage.VolumeSource,
+				VolumeSource: volumeSource,
 			},
 		},
 		VolumeMounts: []corev1.VolumeMount{

@@ -1,0 +1,28 @@
+---
+# E2E Test: ModelRepository with NFS storage for Ollama
+# This test requires an NFS server to be available
+# Set NFS_SERVER environment variable to enable this test
+# Note: Update the server IP address before running manually
+
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: ollama-nfs-test
+spec:
+  source:
+    origin: ollama
+    modelId: qwen2.5:0.5b  # Small model for faster testing
+
+  storage:
+    type: NFS
+    mountPath: /data/models
+    nfs:
+      server: nfs-server.default.svc.cluster.local
+      path: /exports  # NFS server exports /exports directory
+      readOnly: false
+
+  autoDownload: true
+
+  # Optional: Uncomment to specify node for testing
+  # nodeSelector:
+  #   kubernetes.io/hostname: worker-node-1

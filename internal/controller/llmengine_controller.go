@@ -62,7 +62,7 @@ type LLMEngineReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	// Fetch the LLMEngine instance
 	llmEngine := &aitrigramv1.LLMEngine{}
@@ -100,11 +100,33 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			//TODO maybe trigger the downloading if the autodownload is false
 			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
 		}
+
+		// For storage that requires node affinity, ensure BoundNodeName is set
+		if requiresNodeAffinity(modelRepo) {
+			if modelRepo.Status.BoundNodeName == "" {
+				msg := fmt.Sprintf("Waiting for ModelRepository %s to bind to a node (storage type: %s requires node affinity)",
+					modelRepo.Name, getStorageType(modelRepo))
+				return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForNodeBinding", msg)
+			}
+			logger.Info("ModelRepository is bound to node",
+				"modelRepo", modelRepo.Name,
+				"boundNode", modelRepo.Status.BoundNodeName,
+				"storageType", getStorageType(modelRepo))
+		}
 	}
 
 	// Validate GPU availability if GPU is enabled
 	if llmEngine.Spec.GPU != nil && llmEngine.Spec.GPU.Enabled {
-		if err := r.validateGPUAvailability(ctx, llmEngine); err != nil {
+		// If any ModelRepository requires node affinity, validate GPU on that specific node
+		var requiredNodeName string
+		for _, modelRepo := range modelRepos {
+			if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName != "" {
+				requiredNodeName = modelRepo.Status.BoundNodeName
+				break
+			}
+		}
+
+		if err := r.validateGPUAvailability(ctx, llmEngine, requiredNodeName); err != nil {
 			return r.updateStatus(ctx, llmEngine, "Error", "GPUValidationFailed", err.Error())
 		}
 	}
@@ -114,6 +136,15 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	totalDeployments := len(modelRepos)
 
 	for _, modelRepo := range modelRepos {
+		// Double-check prerequisites before creating deployment
+		// This ensures we don't create a deployment that will fail to schedule
+		if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName == "" {
+			msg := fmt.Sprintf("Cannot create deployment: ModelRepository %s not yet bound to a node (storage: %s)",
+				modelRepo.Name, getStorageType(modelRepo))
+			logger.Info(msg, "modelRepo", modelRepo.Name)
+			return r.updateStatus(ctx, llmEngine, "Pending", "NodeBindingRequired", msg)
+		}
+
 		// Create or update Deployment for this model
 		deployment, err := r.createOrUpdateDeploymentForModel(ctx, llmEngine, modelRepo)
 		if err != nil {
@@ -197,10 +228,10 @@ func (r *LLMEngineReconciler) createOrUpdateDeploymentForModel(ctx context.Conte
 	return existing, nil
 }
 
-// detectGPUAvailability checks if GPU resources are requested
 // validateGPUAvailability validates that GPU nodes are available in the cluster
+// If requiredNodeName is specified, validates GPU availability on that specific node only
 // Returns an error if GPU is required but no suitable nodes are found
-func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
+func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, requiredNodeName string) error {
 	logger := log.FromContext(ctx)
 
 	// Get GPU configuration
@@ -215,7 +246,57 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 		gpuType = "nvidia.com/gpu"
 	}
 
-	// List all nodes
+	requestedGPUs := gpuConfig.Count
+	if requestedGPUs == 0 {
+		requestedGPUs = 1
+	}
+
+	// If a specific node is required (due to storage constraints), validate only that node
+	if requiredNodeName != "" {
+		node := &corev1.Node{}
+		if err := r.Get(ctx, client.ObjectKey{Name: requiredNodeName}, node); err != nil {
+			return fmt.Errorf("failed to get required node %s: %w", requiredNodeName, err)
+		}
+
+		// Check if node has GPU resources
+		gpuCapacity := node.Status.Allocatable[corev1.ResourceName(gpuType)]
+		if gpuCapacity.IsZero() {
+			return fmt.Errorf("required node %s (due to storage constraints) does not have GPU resources of type %s. "+
+				"Storage requires node affinity, but this node lacks GPUs. "+
+				"Either use ReadWriteMany storage or ensure the storage node has GPUs",
+				requiredNodeName, gpuType)
+		}
+
+		// Check if node has enough GPUs
+		availableGPUs := gpuCapacity.Value()
+		if availableGPUs < int64(requestedGPUs) {
+			return fmt.Errorf("required node %s has only %d GPUs of type %s, but %d requested. "+
+				"Storage requires node affinity to this node",
+				requiredNodeName, availableGPUs, gpuType, requestedGPUs)
+		}
+
+		// Check if node matches custom node selector
+		if len(gpuConfig.NodeSelector) > 0 {
+			for key, value := range gpuConfig.NodeSelector {
+				if node.Labels[key] != value {
+					return fmt.Errorf("required node %s (due to storage) does not match GPU node selector %s=%s. "+
+						"Storage node binding conflicts with GPU requirements",
+						requiredNodeName, key, value)
+				}
+			}
+		}
+
+		logger.Info("GPU validation successful on required node",
+			"node", requiredNodeName,
+			"gpuType", gpuType,
+			"availableGPUs", availableGPUs,
+			"requestedGPUs", requestedGPUs,
+			"reason", "storage node affinity")
+
+		return nil
+	}
+
+	// No specific node required - validate cluster-wide GPU availability
 	nodeList := &corev1.NodeList{}
 	if err := r.List(ctx, nodeList); err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
@@ -224,10 +305,6 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 	// Find nodes with GPU resources
 	var suitableNodes []string
 	var gpuNodes []string
-	requestedGPUs := gpuConfig.Count
-	if requestedGPUs == 0 {
-		requestedGPUs = 1
-	}
 
 	for _, node := range nodeList.Items {
 		// Check if node has GPU resources
@@ -303,6 +380,8 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 }
 
 func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) *appsv1.Deployment {
+	logger := log.FromContext(context.Background())
+
 	// Get replicas from spec, default to 1
 	replicas := int32(1)
 	if llmEngine.Spec.Replicas != nil {
@@ -340,14 +419,48 @@ func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLM
 		HostIPC:    llmEngine.Spec.HostIPC,
 	}
 
+	// Initialize nodeSelector map
+	nodeSelector := make(map[string]string)
+
+	// For single-node storage (HostPath or ReadWriteOnce PVC), enforce node affinity
+	// to ensure the inference pod runs on the same node as the download job
+	if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName != "" {
+		nodeSelector["kubernetes.io/hostname"] = modelRepo.Status.BoundNodeName
+		logger.Info("Adding node affinity for single-node storage",
+			"deployment", deploymentName,
+			"boundNode", modelRepo.Status.BoundNodeName,
+			"storageType", getStorageType(modelRepo))
+	}
+
 	// Add GPU node selector and tolerations if GPU is enabled
 	if workload.RequestGPU {
-		if len(workload.NodeSelector) > 0 {
-			podSpec.NodeSelector = workload.NodeSelector
+		// Merge GPU node selectors with storage node selector
+		for k, v := range workload.NodeSelector {
+			// Check if there's a conflict
+			if existingValue, exists := nodeSelector[k]; exists && existingValue != v {
+				logger.Error(fmt.Errorf("node selector conflict"),
+					"GPU node selector conflicts with storage node requirement",
+					"key", k,
+					"gpuValue", v,
+					"storageValue", existingValue,
+					"deployment", deploymentName)
+				// Storage node requirement takes precedence for data locality
+			} else {
+				nodeSelector[k] = v
+			}
+		}
+
+		if len(nodeSelector) > 0 {
+			podSpec.NodeSelector = nodeSelector
 		}
 
 		if len(workload.Tolerations) > 0 {
 			podSpec.Tolerations = workload.Tolerations
+		}
+	} else {
+		// CPU-only: just apply the storage-based node selector if any
+		if len(nodeSelector) > 0 {
+			podSpec.NodeSelector = nodeSelector
 		}
 	}
 

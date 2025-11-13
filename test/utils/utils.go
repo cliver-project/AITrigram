@@ -167,8 +167,19 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
+// LoadImageToKindClusterWithName loads a local docker image to the kind cluster or minikube
+// Deprecated: For backward compatibility, name kept as LoadImageToKindClusterWithName
+// Now supports both kind and minikube based on USE_MINIKUBE env var
 func LoadImageToKindClusterWithName(name string) error {
+	// Check if using minikube
+	if os.Getenv("USE_MINIKUBE") == "true" {
+		// For minikube, use: minikube image load <image>
+		cmd := exec.Command("minikube", "image", "load", name)
+		_, err := Run(cmd)
+		return err
+	}
+
+	// Default to kind for backward compatibility
 	cluster := "kind"
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		cluster = v

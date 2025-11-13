@@ -1,0 +1,21 @@
+# Integration Test: NFS Storage
+# Prerequisites:
+# - NFS server running in cluster or externally accessible
+# - For kind cluster: use nfs-server-provisioner or external NFS
+
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: test-nfs-model
+spec:
+  source:
+    origin: huggingface
+    modelId: "hf-internal-testing/tiny-random-gpt2"  # Small test model
+  storage:
+    type: NFS
+    mountPath: /data/models
+    nfs:
+      server: nfs-server.default.svc.cluster.local  # Adjust to your NFS server
+      path: /exports/models
+      readOnly: false
+  autoDownload: true

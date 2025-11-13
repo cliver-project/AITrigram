@@ -1,0 +1,40 @@
+---
+# E2E Test: ModelRepository with PVC ReadWriteMany (RWX) storage for Ollama
+# Requires a storage class that supports ReadWriteMany access mode
+# Examples: nfs-client, rook-cephfs, AWS EFS, Azure Files
+
+# Note: PVC is created in the same namespace as where the test runs
+# Update the storageClassName to match your cluster's RWX-capable storage class
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-storage-rwx-test
+  # This will be created in the test namespace
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-client  # Change to your RWX storage class
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: ollama-pvc-rwx-test
+spec:
+  source:
+    origin: ollama
+    modelId: qwen2.5:0.5b  # Small model for faster testing
+
+  storage:
+    type: PersistentVolumeClaim
+    mountPath: /data/models
+    persistentVolumeClaim:
+      size: 2Gi
+      accessMode: ReadWriteMany
+      storageClassName: nfs-client  # Change to your RWX storage class
+
+  autoDownload: true

@@ -1,0 +1,26 @@
+---
+# E2E Test: ModelRepository with HostPath storage for Ollama
+# This works well with minikube and single-node setups
+# The model will be stored on the node's filesystem
+
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: ollama-hostpath-test
+spec:
+  source:
+    origin: ollama
+    modelId: qwen2.5:0.5b  # Small model (~0.5GB) for faster testing
+
+  storage:
+    type: HostPath
+    mountPath: /data/models
+    hostPath:
+      path: /mnt/aitrigram-models/e2e-test
+      type: DirectoryOrCreate
+
+  autoDownload: true
+
+  # Optional: Uncomment to pin to specific node
+  # nodeSelector:
+  #   kubernetes.io/hostname: minikube

@@ -43,6 +43,7 @@ import (
 
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 	"github.com/cliver-project/AITrigram/internal/controller"
+	"github.com/cliver-project/AITrigram/internal/controller/storage"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -165,10 +166,14 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		return err
 	}
 	// LLMModel controller has been replaced by ModelRepository controller
+	// Create storage provider factory
+	storageFactory := storage.NewProviderFactory(mgr.GetClient(), mgr.GetScheme())
+
 	if err = (&controller.ModelRepositoryReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: opts.Namespace,
+		StorageFactory:    storageFactory,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ModelRepository")
 		return err

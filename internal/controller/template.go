@@ -57,14 +57,9 @@ func (r *TemplateRenderer) Render(templateStr string, params map[string]interfac
 	return result, nil
 }
 
-// RenderModelScript renders a model download script with model-specific context
-// This is a convenience method for rendering scripts with ModelId, ModelName, and MountPath
-func (r *TemplateRenderer) RenderModelScript(templateStr, modelId, modelName, mountPath string) (string, error) {
-	params := map[string]interface{}{
-		"ModelId":   modelId,
-		"ModelName": modelName,
-		"MountPath": mountPath,
-	}
+// RenderModelScript renders a model download script with the provided parameters
+// This is a convenience method for rendering scripts with template parameters
+func (r *TemplateRenderer) RenderModelScript(templateStr string, params map[string]interface{}) (string, error) {
 	return r.Render(templateStr, params)
 }
 

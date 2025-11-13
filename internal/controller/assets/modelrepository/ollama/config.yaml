@@ -1,0 +1,54 @@
+apiVersion: aitrigram.io/v1
+kind: AssetConfig
+metadata:
+  name: ollama-default
+  origin: ollama
+
+# Container image to run scripts in
+image: ollama/ollama:latest
+
+# Download job configuration
+download:
+  scriptFile: download.sh
+  interpreter: bash
+
+  # Default environment variables
+  environment:
+    - name: OLLAMA_HOME
+      valueFrom: mountPath  # Special value - controller sets to mount path
+    - name: OLLAMA_MODELS
+      valueFrom: mountPath  # Special value - controller sets to mount path
+
+  # Resource requirements
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+# Cleanup job configuration
+cleanup:
+  scriptFile: cleanup.sh
+  interpreter: bash
+
+  environment:
+    - name: OLLAMA_HOME
+      valueFrom: mountPath
+    - name: OLLAMA_MODELS
+      valueFrom: mountPath
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Volume mount configuration
+volumeMount:
+  defaultPath: /data/models
+  name: model-storage
+  readOnly: false  # For download/cleanup jobs

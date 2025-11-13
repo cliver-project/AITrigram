@@ -40,9 +40,10 @@ func TestBuildLLMEngineWorkload_VLLM_Default(t *testing.T) {
 				ModelId: "meta-llama/Llama-3-8B",
 			},
 			Storage: aitrigramv1.ModelStorage{
-				Path: "/data/models",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				Type:      aitrigramv1.StorageTypeHostPath,
+				MountPath: "/data/models",
+				HostPath: &aitrigramv1.HostPathStorageSpec{
+					Path: "/data/models",
 				},
 			},
 		},
@@ -178,11 +179,11 @@ func TestBuildLLMEngineWorkload_VLLM_GPU(t *testing.T) {
 				ModelId: "meta-llama/Llama-3-70B",
 			},
 			Storage: aitrigramv1.ModelStorage{
-				Path: "/data/models",
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: "model-pvc",
-					},
+				Type:      aitrigramv1.StorageTypePVC,
+				MountPath: "/data/models",
+				PersistentVolumeClaim: &aitrigramv1.PVCStorageSpec{
+					ExistingClaim: stringPtr("model-pvc"),
+					Size:          "50Gi",
 				},
 			},
 		},
@@ -281,9 +282,10 @@ func TestBuildLLMEngineWorkload_VLLM_WithHFToken(t *testing.T) {
 				},
 			},
 			Storage: aitrigramv1.ModelStorage{
-				Path: "/data/models",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				Type:      aitrigramv1.StorageTypeHostPath,
+				MountPath: "/data/models",
+				HostPath: &aitrigramv1.HostPathStorageSpec{
+					Path: "/data/models",
 				},
 			},
 		},
@@ -339,9 +341,10 @@ func TestBuildLLMEngineWorkload_VLLM_WithCustomCache(t *testing.T) {
 				ModelId: "meta-llama/Llama-3-8B",
 			},
 			Storage: aitrigramv1.ModelStorage{
-				Path: "/data/models",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				Type:      aitrigramv1.StorageTypeHostPath,
+				MountPath: "/data/models",
+				HostPath: &aitrigramv1.HostPathStorageSpec{
+					Path: "/data/models",
 				},
 			},
 		},
@@ -355,11 +358,11 @@ func TestBuildLLMEngineWorkload_VLLM_WithCustomCache(t *testing.T) {
 			EngineType: aitrigramv1.LLMEngineTypeVLLM,
 			ModelRefs:  []string{"test-model-custom-cache"},
 			Cache: &aitrigramv1.ModelStorage{
-				Path: "/persistent-cache",
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: "cache-pvc",
-					},
+				Type:      aitrigramv1.StorageTypePVC,
+				MountPath: "/persistent-cache",
+				PersistentVolumeClaim: &aitrigramv1.PVCStorageSpec{
+					ExistingClaim: stringPtr("cache-pvc"),
+					Size:          "50Gi",
 				},
 			},
 		},
@@ -414,9 +417,10 @@ func TestBuildLLMEngineWorkload_Ollama_Default(t *testing.T) {
 				ModelId: "llama3:8b",
 			},
 			Storage: aitrigramv1.ModelStorage{
-				Path: "/data/models",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				Type:      aitrigramv1.StorageTypeHostPath,
+				MountPath: "/data/models",
+				HostPath: &aitrigramv1.HostPathStorageSpec{
+					Path: "/data/models",
 				},
 			},
 		},
