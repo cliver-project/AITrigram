@@ -17,7 +17,7 @@ spec:
     type: NFS
     mountPath: /data/models
     nfs:
-      server: nfs-server.default.svc.cluster.local
+      server: nfs-server.aitrigram-system.svc.cluster.local
       path: /exports  # NFS server exports /exports directory
       readOnly: false
 

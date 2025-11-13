@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -44,38 +45,66 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	By("building the controller binary")
-	cmd := exec.Command("make", "build")
+	// Check if CRDs are already installed
+	By("checking if CRDs are already installed")
+	cmd := exec.Command("kubectl", "get", "crd", "modelrepositories.aitrigram.cliver-project.github.io")
 	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
+	crdsInstalled := (err == nil)
+	if crdsInstalled {
+		_, _ = fmt.Fprintf(GinkgoWriter, "CRDs already installed, skipping installation\n")
+	} else {
+		By("installing CRDs to the cluster")
+		cmd = exec.Command("make", "install")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+	}
 
-	By("building the controller docker image")
-	cmd = exec.Command("make", "docker-build", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
+	// Check if controller is already deployed
+	By("checking if controller is already deployed")
+	cmd = exec.Command("kubectl", "get", "deployment", "controller-manager", "-n", "aitrigram-system")
 	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
+	controllerDeployed := (err == nil)
+	if controllerDeployed {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller already deployed, skipping deployment\n")
+	} else {
+		By("building the controller binary")
+		cmd = exec.Command("make", "build")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
 
-	By("loading the controller image into minikube")
-	cmd = exec.Command("minikube", "image", "load", "ghcr.io/cliver-project/aitrigram-controller:latest")
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
+		By("building the controller docker image")
+		cmd = exec.Command("make", "docker-build", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
 
-	By("installing CRDs to the cluster")
-	cmd = exec.Command("make", "install")
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+		By("loading the controller image into minikube")
+		cmd = exec.Command("minikube", "image", "load", "ghcr.io/cliver-project/aitrigram-controller:latest")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
 
-	By("deploying the controller to the cluster")
-	cmd = exec.Command("make", "deploy", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller")
+		By("deploying the controller to the cluster")
+		cmd = exec.Command("make", "deploy", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller")
+	}
+
+	// Wait for controller to be ready if it was just deployed or already exists
+	By("waiting for controller to be ready")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "deployment", "controller-manager", "-n", "aitrigram-system",
+			"-o", "jsonpath={.status.readyReplicas}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get controller deployment status")
+		g.Expect(output).To(Equal("1"), "Controller should have 1 ready replica")
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller ready replicas: %s\n", output)
+	}).WithTimeout(5 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 })
 
 var _ = AfterSuite(func() {
-	By("undeploying the controller from the cluster")
-	cmd := exec.Command("make", "undeploy")
-	_, _ = utils.Run(cmd) // Don't fail on cleanup errors
-
-	By("uninstalling CRDs from the cluster")
-	cmd = exec.Command("make", "uninstall")
-	_, _ = utils.Run(cmd) // Don't fail on cleanup errors
+	// Note: We intentionally do NOT cleanup controller/CRDs in AfterSuite
+	// This allows tests to run multiple times against the same cluster
+	// and supports production-grade clusters where the controller is managed separately
+	// Users can manually run 'make undeploy' and 'make uninstall' if needed
+	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed. Controller and CRDs remain deployed for reuse.\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "To cleanup, run: make undeploy && make uninstall\n")
 })

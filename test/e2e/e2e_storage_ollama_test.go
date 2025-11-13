@@ -31,47 +31,70 @@ import (
 )
 
 var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
-	const testNamespace = "mr-storage-test"
+	// Use the same namespace as the controller (aitrigram-system)
+	// Jobs and PVCs are created in the operator namespace
+	const testNamespace = namespace // Reuse aitrigram-system from e2e_test.go
 
-	// Setup test namespace and NFS server
+	// Setup NFS server and provisioner for testing
 	BeforeAll(func() {
-		By("creating test namespace for ModelRepository storage tests")
-		cmd := exec.Command("kubectl", "create", "ns", testNamespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
-
 		By("deploying NFS server for testing")
-		cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-server-deployment.yaml")
-		_, err = utils.Run(cmd)
+		cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-server-deployment.yaml")
+		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy NFS server")
 
 		By("waiting for NFS server to be ready")
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "deployment", "nfs-server", "-n", "default",
+			cmd := exec.Command("kubectl", "get", "deployment", "nfs-server", "-n", testNamespace,
 				"-o", "jsonpath={.status.readyReplicas}")
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to get NFS server deployment status")
 			g.Expect(output).To(Equal("1"), "NFS server should have 1 ready replica")
+			_, _ = fmt.Fprintf(GinkgoWriter, "NFS server ready replicas: %s\n", output)
 		}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 
 		By("waiting for NFS server pod to be running")
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods", "-n", "default", "-l", "app=nfs-server",
+			cmd := exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", "app=nfs-server",
 				"-o", "jsonpath={.items[0].status.phase}")
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to get NFS server pod status")
 			g.Expect(output).To(Equal("Running"), "NFS server pod should be running")
+			_, _ = fmt.Fprintf(GinkgoWriter, "NFS server pod status: %s\n", output)
 		}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+		// Check if nfs-client storage class already exists
+		By("checking if nfs-client storage class already exists")
+		cmd = exec.Command("kubectl", "get", "storageclass", "nfs-client")
+		_, err = utils.Run(cmd)
+		nfsClientExists := (err == nil)
+		if nfsClientExists {
+			_, _ = fmt.Fprintf(GinkgoWriter, "nfs-client storage class already exists, skipping NFS provisioner installation\n")
+		} else {
+			By("deploying NFS provisioner for RWX PVC tests")
+			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-provisioner.yaml")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to deploy NFS provisioner")
+
+			By("waiting for NFS provisioner to be ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "nfs-client-provisioner", "-n", testNamespace,
+					"-o", "jsonpath={.status.readyReplicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Failed to get NFS provisioner deployment status")
+				g.Expect(output).To(Equal("1"), "NFS provisioner should have 1 ready replica")
+				_, _ = fmt.Fprintf(GinkgoWriter, "NFS provisioner ready replicas: %s\n", output)
+			}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		}
 	})
 
-	// Cleanup test namespace and NFS server
+	// Cleanup NFS server and provisioner
 	AfterAll(func() {
-		By("cleaning up NFS server deployment")
-		cmd := exec.Command("kubectl", "delete", "-f", "test/e2e/storage/nfs-server-deployment.yaml", "--wait=false")
+		By("cleaning up NFS provisioner")
+		cmd := exec.Command("kubectl", "delete", "-f", "test/e2e/storage/nfs-provisioner.yaml", "--wait=false")
 		_, _ = utils.Run(cmd)
 
-		By("cleaning up test namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--wait=false")
+		By("cleaning up NFS server deployment")
+		cmd = exec.Command("kubectl", "delete", "-f", "test/e2e/storage/nfs-server-deployment.yaml", "--wait=false")
 		_, _ = utils.Run(cmd)
 	})
 
@@ -85,28 +108,31 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 		It("should download Ollama model successfully with HostPath storage", func() {
 			By("applying ModelRepository with HostPath storage")
 			cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-02-ollama-hostpath.yaml")
-			_, err := utils.Run(cmd)
+			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply ModelRepository with HostPath storage")
+			_, _ = fmt.Fprintf(GinkgoWriter, "Applied ModelRepository: %s\n", output)
 
 			By("waiting for download job to be created")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "job", "-l",
-					"app.kubernetes.io/managed-by=modelrepository-controller,modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
+				cmd := exec.Command("kubectl", "get", "job", "-n", testNamespace, "-l",
+					"modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
 					"-o", "name")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get download job")
 				jobs := utils.GetNonEmptyLines(output)
 				g.Expect(len(jobs)).To(BeNumerically(">", 0), "Expected at least 1 download job")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Found download job: %v\n", jobs)
 			}).Should(Succeed())
 
 			By("waiting for download job to complete successfully")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "job", "-l",
-					"app.kubernetes.io/managed-by=modelrepository-controller,modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
+				cmd := exec.Command("kubectl", "get", "job", "-n", testNamespace, "-l",
+					"modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.succeeded}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get job status")
 				g.Expect(output).To(Equal("1"), "Download job should succeed")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying ModelRepository status is 'downloaded'")
@@ -116,19 +142,21 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
 				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying BoundNodeName is set in status")
 			cmd = exec.Command("kubectl", "get", "modelrepository", modelRepoName,
 				"-o", "jsonpath={.status.boundNodeName}")
-			output, err := utils.Run(cmd)
+			output, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to get boundNodeName")
 			Expect(output).NotTo(BeEmpty(), "BoundNodeName should be set for HostPath storage")
 			_, _ = fmt.Fprintf(GinkgoWriter, "Model bound to node: %s\n", output)
 
 			By("cleaning up ModelRepository")
 			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			_, _ = utils.Run(cmd)
+			output, _ = utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup result: %s\n", output)
 		})
 	})
 
@@ -144,10 +172,11 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 			if err != nil || defaultSC == "" {
 				Skip("No default storage class found - skipping RWX PVC test")
 			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "Using default storage class: %s\n", defaultSC)
 
-			By("applying PVC and ModelRepository with RWX PVC storage")
-			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-03-ollama-pvc-rwx.yaml", "-n", testNamespace)
-			_, err = utils.Run(cmd)
+			By("applying ModelRepository with RWX PVC storage")
+			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-03-ollama-pvc-rwx.yaml")
+			output, err := utils.Run(cmd)
 			if err != nil {
 				// If RWX is not supported, skip gracefully
 				if strings.Contains(err.Error(), "ReadWriteMany") || strings.Contains(err.Error(), "access mode") {
@@ -155,24 +184,28 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				}
 				Expect(err).NotTo(HaveOccurred(), "Failed to apply ModelRepository with RWX PVC storage")
 			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "Applied ModelRepository: %s\n", output)
 
-			By("waiting for PVC to be created")
+			By("waiting for PVC to be auto-created by controller")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pvc", pvcName, "-n", testNamespace,
-					"-o", "jsonpath={.status.phase}")
+				cmd := exec.Command("kubectl", "get", "pvc", "-n", testNamespace, "-l",
+					"aitrigram.io/model-repo="+modelRepoName,
+					"-o", "jsonpath={.items[0].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get PVC")
-				g.Expect(output).To(Or(Equal("Bound"), Equal("Pending")), "PVC should exist")
+				g.Expect(output).To(Or(Equal("Bound"), Equal("Pending")), "PVC should be created by controller")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Auto-created PVC status: %s\n", output)
 			}).Should(Succeed())
 
 			By("waiting for download job to complete successfully")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "job", "-l",
-					"app.kubernetes.io/managed-by=modelrepository-controller,modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
+				cmd := exec.Command("kubectl", "get", "job", "-n", testNamespace, "-l",
+					"modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.succeeded}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get job status")
 				g.Expect(output).To(Equal("1"), "Download job should succeed")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying ModelRepository status is 'downloaded'")
@@ -182,15 +215,13 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
 				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
-			By("cleaning up ModelRepository")
+			By("cleaning up ModelRepository (controller will auto-cleanup PVC)")
 			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			_, _ = utils.Run(cmd)
-
-			By("cleaning up PVC")
-			cmd = exec.Command("kubectl", "delete", "pvc", pvcName, "-n", testNamespace, "--wait=false")
-			_, _ = utils.Run(cmd)
+			cleanupOutput, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository result: %s\n", cleanupOutput)
 		})
 	})
 
@@ -201,33 +232,38 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 		It("should download Ollama model successfully with RWO PVC storage", func() {
 			By("checking if a storage class is available")
 			cmd := exec.Command("kubectl", "get", "storageclass")
-			_, err := utils.Run(cmd)
+			output, err := utils.Run(cmd)
 			if err != nil {
 				Skip("No storage class available - skipping RWO PVC test")
 			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "Storage classes available\n")
 
-			By("applying PVC and ModelRepository with RWO PVC storage")
-			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-04-ollama-pvc-rwo.yaml", "-n", testNamespace)
-			_, err = utils.Run(cmd)
+			By("applying ModelRepository with RWO PVC storage")
+			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-04-ollama-pvc-rwo.yaml")
+			output, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply ModelRepository with RWO PVC storage")
+			_, _ = fmt.Fprintf(GinkgoWriter, "Applied ModelRepository: %s\n", output)
 
-			By("waiting for PVC to be created")
+			By("waiting for PVC to be auto-created by controller")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pvc", pvcName, "-n", testNamespace,
-					"-o", "jsonpath={.status.phase}")
+				cmd := exec.Command("kubectl", "get", "pvc", "-n", testNamespace, "-l",
+					"aitrigram.io/model-repo="+modelRepoName,
+					"-o", "jsonpath={.items[0].status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get PVC")
-				g.Expect(output).To(Or(Equal("Bound"), Equal("Pending")), "PVC should exist")
+				g.Expect(output).To(Or(Equal("Bound"), Equal("Pending")), "PVC should be created by controller")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Auto-created PVC status: %s\n", output)
 			}).Should(Succeed())
 
 			By("waiting for download job to complete successfully")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "job", "-l",
-					"app.kubernetes.io/managed-by=modelrepository-controller,modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
+				cmd := exec.Command("kubectl", "get", "job", "-n", testNamespace, "-l",
+					"modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.succeeded}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get job status")
 				g.Expect(output).To(Equal("1"), "Download job should succeed")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying ModelRepository status is 'downloaded'")
@@ -237,23 +273,21 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
 				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying BoundNodeName is set in status for RWO storage")
 			cmd = exec.Command("kubectl", "get", "modelrepository", modelRepoName,
 				"-o", "jsonpath={.status.boundNodeName}")
-			output, err := utils.Run(cmd)
+			output, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to get boundNodeName")
 			Expect(output).NotTo(BeEmpty(), "BoundNodeName should be set for RWO storage")
 			_, _ = fmt.Fprintf(GinkgoWriter, "Model bound to node: %s\n", output)
 
-			By("cleaning up ModelRepository")
+			By("cleaning up ModelRepository (controller will auto-cleanup PVC)")
 			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			_, _ = utils.Run(cmd)
-
-			By("cleaning up PVC")
-			cmd = exec.Command("kubectl", "delete", "pvc", pvcName, "-n", testNamespace, "--wait=false")
-			_, _ = utils.Run(cmd)
+			cleanupOutput, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository result: %s\n", cleanupOutput)
 		})
 	})
 
@@ -263,17 +297,19 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 		It("should download Ollama model successfully with NFS storage", func() {
 			By("applying ModelRepository with NFS storage")
 			cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-01-ollama-nfs.yaml")
-			_, err := utils.Run(cmd)
+			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply ModelRepository with NFS storage")
+			_, _ = fmt.Fprintf(GinkgoWriter, "Applied ModelRepository: %s\n", output)
 
 			By("waiting for download job to complete successfully")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "job", "-l",
-					"app.kubernetes.io/managed-by=modelrepository-controller,modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
+				cmd := exec.Command("kubectl", "get", "job", "-n", testNamespace, "-l",
+					"modelrepository.aitrigram.cliver-project.github.io/name="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.succeeded}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get job status")
 				g.Expect(output).To(Equal("1"), "Download job should succeed")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
 			By("verifying ModelRepository status is 'downloaded'")
@@ -283,11 +319,13 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
 				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
 			By("cleaning up ModelRepository")
 			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			_, _ = utils.Run(cmd)
+			output, _ = utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup result: %s\n", output)
 		})
 	})
 })

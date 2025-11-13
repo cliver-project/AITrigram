@@ -2,24 +2,11 @@
 # E2E Test: ModelRepository with PVC ReadWriteOnce (RWO) storage for Ollama
 # Works with most storage classes including local-path, standard, gp2, etc.
 # The model download and LLMEngine pods will be pinned to the same node
-
-# Note: PVC is created in the same namespace as where the test runs
+#
+# Note: The PVC will be automatically created by the controller in the
+# aitrigram-system namespace (where the controller runs)
 # The download job will bind to a node, and status.boundNodeName will be set
 
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: model-storage-rwo-test
-  # This will be created in the test namespace
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: standard  # Use default or change to your RWO storage class
-  resources:
-    requests:
-      storage: 2Gi
-
----
 apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
