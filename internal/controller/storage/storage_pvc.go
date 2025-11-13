@@ -256,7 +256,7 @@ func (p *PVCProvider) GetStatus(ctx context.Context, namespace string) (*Storage
 
 	status := &StorageStatus{
 		Ready:   pvc.Status.Phase == corev1.ClaimBound,
-		Message: string(pvc.Status.Phase),
+		Message: fmt.Sprintf("PVC of %s it not ready, it is on phase: %s", p.pvcName, string(pvc.Status.Phase)),
 	}
 
 	if capacity := pvc.Status.Capacity[corev1.ResourceStorage]; !capacity.IsZero() {
