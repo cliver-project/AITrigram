@@ -21,6 +21,12 @@ spec:
       labels:
         app: nfs-server
     spec:
+      # Use dedicated ServiceAccount with privileged SCC for OpenShift
+      serviceAccountName: nfs-server
+      # NFS server requires privileged access - namespace must allow privileged pods
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: nfs-server
         image: itsthenetwork/nfs-server-alpine:latest
@@ -32,7 +38,18 @@ spec:
         - name: rpcbind
           containerPort: 111
         securityContext:
+          # NFS server requires privileged mode to function properly
           privileged: true
+          # Run as root (required for NFS server)
+          runAsUser: 0
+          runAsNonRoot: false
+          # Add specific capabilities needed for NFS
+          capabilities:
+            add:
+            - SYS_ADMIN
+            - SETPCAP
+            drop:
+            - ALL
         env:
         - name: SHARED_DIRECTORY
           value: "/exports"

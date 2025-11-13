@@ -254,9 +254,16 @@ func (p *PVCProvider) GetStatus(ctx context.Context, namespace string) (*Storage
 		return nil, fmt.Errorf("failed to get PVC status: %w", err)
 	}
 
+	// Both Bound and Pending are considered ready:
+	// - Bound: PVC is fully ready
+	// - Pending: Valid state, especially for WaitForFirstConsumer binding mode
+	//   where the PVC will bind once the download job pod is created
+	isReady := pvc.Status.Phase == corev1.ClaimBound || pvc.Status.Phase == corev1.ClaimPending
+	message := fmt.Sprintf("PVC %s is in phase: %s", p.pvcName, string(pvc.Status.Phase))
+
 	status := &StorageStatus{
-		Ready:   pvc.Status.Phase == corev1.ClaimBound,
-		Message: fmt.Sprintf("PVC of %s it not ready, it is on phase: %s", p.pvcName, string(pvc.Status.Phase)),
+		Ready:   isReady,
+		Message: message,
 	}
 
 	if capacity := pvc.Status.Capacity[corev1.ResourceStorage]; !capacity.IsZero() {

@@ -12,44 +12,71 @@ download:
   scriptFile: download.py
   interpreter: python3
 
-  # Default environment variables
+  # Environment variables - all required variables must be defined here
+  # Runtime values are resolved from valueFrom:
+  #   - "mountPath": Resolved to actual storage mount path
+  #   - "secret:hfTokenSecretRef": Resolved from ModelSource.HFTokenSecretRef (optional)
+  # Parameters (MODEL_ID, REVISION) are automatically added by controller
   environment:
     - name: HF_HOME
-      valueFrom: mountPath  # Special value - controller sets to mount path
+      valueFrom: mountPath
     - name: HF_HUB_CACHE
-      valueFrom: mountPath  # Special value - controller sets to mount path
-
-  # Secrets that may be needed (optional, user provides via CRD)
-  secretRefs:
+      valueFrom: mountPath
     - name: HF_TOKEN
-      optional: true
-      secretKey: token
+      valueFrom: secret:hfTokenSecretRef  # Optional: from ModelSource.HFTokenSecretRef
 
-  # Resource requirements
+  # Resource requirements (K8s native format - easily extensible for GPUs, etc.)
   resources:
     requests:
-      memory: "512Mi"
-      cpu: "500m"
+      memory: 512Mi
+      cpu: 500m
     limits:
-      memory: "4Gi"
-      cpu: "2000m"
+      memory: 4Gi
+      cpu: 2000m
+
+  # Security context - HuggingFace requirements
+  # Note: runAsUser/runAsGroup not specified for OpenShift compatibility
+  # OpenShift will automatically assign UID/GID from namespace's allowed range
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false  # HuggingFace Hub needs to write cache
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
 
 # Cleanup job configuration
 cleanup:
   scriptFile: cleanup.py
   interpreter: python3
 
+  # Environment variables for cleanup
   environment:
     - name: HF_HOME
       valueFrom: mountPath
 
   resources:
     requests:
-      memory: "256Mi"
-      cpu: "250m"
+      memory: 256Mi
+      cpu: 250m
     limits:
-      memory: "1Gi"
-      cpu: "1000m"
+      memory: 1Gi
+      cpu: 1000m
+
+  # Security context - Same as download for consistency
+  # Note: runAsUser/runAsGroup not specified for OpenShift compatibility
+  # OpenShift will automatically assign UID/GID from namespace's allowed range
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
 
 # Volume mount configuration
 volumeMount:

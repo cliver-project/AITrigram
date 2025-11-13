@@ -101,6 +101,13 @@ var _ = BeforeSuite(func() {
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller")
 	}
 
+	// Configure namespace PodSecurity settings for E2E tests
+	// This allows privileged pods like NFS server to run in the aitrigram-system namespace
+	By("configuring namespace PodSecurity settings for E2E tests")
+	cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/namespace-config.yaml")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to configure namespace PodSecurity settings")
+
 	// Wait for controller to be ready if it was just deployed or already exists
 	By("waiting for controller to be ready")
 	Eventually(func(g Gomega) {

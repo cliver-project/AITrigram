@@ -21,9 +21,9 @@ package assets
 import (
 	"fmt"
 	"io/fs"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 )
 
@@ -46,37 +46,35 @@ type AssetMetadata struct {
 
 // JobConfig represents configuration for a job (download or cleanup)
 type JobConfig struct {
-	ScriptFile  string               `yaml:"scriptFile"`
-	Interpreter string               `yaml:"interpreter"`
-	Environment []EnvVar             `yaml:"environment,omitempty"`
-	SecretRefs  []SecretRef          `yaml:"secretRefs,omitempty"`
-	Resources   ResourceRequirements `yaml:"resources,omitempty"`
+	ScriptFile      string                       `yaml:"scriptFile"`
+	Interpreter     string                       `yaml:"interpreter"`
+	Environment     []EnvVar                     `yaml:"environment,omitempty"`
+	Resources       *corev1.ResourceRequirements `yaml:"resources,omitempty"`
+	SecurityContext *corev1.SecurityContext      `yaml:"securityContext,omitempty"`
 }
 
-// EnvVar represents an environment variable
+// EnvVar represents an environment variable with flexible value resolution
 type EnvVar struct {
-	Name      string `yaml:"name"`
-	Value     string `yaml:"value,omitempty"`
-	ValueFrom string `yaml:"valueFrom,omitempty"` // "mountPath" or actual value
+	Name  string `yaml:"name"`
+	Value string `yaml:"value,omitempty"`
+	// ValueFrom specifies where to get the value from at runtime:
+	//   - "mountPath": Use the storage mount path
+	//   - "secret:hfToken": Use HFTokenSecretRef from CRD
+	// If both Value and ValueFrom are empty, the variable name is used to lookup from params
+	ValueFrom string `yaml:"valueFrom,omitempty"`
 }
 
-// SecretRef references a secret for authentication
-type SecretRef struct {
-	Name      string `yaml:"name"`
-	Optional  bool   `yaml:"optional"`
-	SecretKey string `yaml:"secretKey"`
+// IsSecretRef returns true if this env var references a secret
+func (e *EnvVar) IsSecretRef() bool {
+	return strings.HasPrefix(e.ValueFrom, "secret:")
 }
 
-// ResourceRequirements specifies resource requirements for a job
-type ResourceRequirements struct {
-	Requests ResourceList `yaml:"requests,omitempty"`
-	Limits   ResourceList `yaml:"limits,omitempty"`
-}
-
-// ResourceList is a map of resource name to quantity
-type ResourceList struct {
-	Memory string `yaml:"memory,omitempty"`
-	CPU    string `yaml:"cpu,omitempty"`
+// GetSecretType returns the secret type (e.g., "hfToken" from "secret:hfToken")
+func (e *EnvVar) GetSecretType() string {
+	if e.IsSecretRef() {
+		return strings.TrimPrefix(e.ValueFrom, "secret:")
+	}
+	return ""
 }
 
 // VolumeMountConfig specifies volume mount configuration
@@ -157,46 +155,4 @@ func (ac *AssetConfig) Validate() error {
 		return fmt.Errorf("volumeMount.name is required")
 	}
 	return nil
-}
-
-// ToK8sResourceRequirements converts ResourceRequirements to Kubernetes ResourceRequirements
-func (rr *ResourceRequirements) ToK8sResourceRequirements() (*corev1.ResourceRequirements, error) {
-	k8sReqs := &corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{},
-		Limits:   corev1.ResourceList{},
-	}
-
-	// Parse requests
-	if rr.Requests.Memory != "" {
-		qty, err := resource.ParseQuantity(rr.Requests.Memory)
-		if err != nil {
-			return nil, fmt.Errorf("invalid memory request: %w", err)
-		}
-		k8sReqs.Requests[corev1.ResourceMemory] = qty
-	}
-	if rr.Requests.CPU != "" {
-		qty, err := resource.ParseQuantity(rr.Requests.CPU)
-		if err != nil {
-			return nil, fmt.Errorf("invalid CPU request: %w", err)
-		}
-		k8sReqs.Requests[corev1.ResourceCPU] = qty
-	}
-
-	// Parse limits
-	if rr.Limits.Memory != "" {
-		qty, err := resource.ParseQuantity(rr.Limits.Memory)
-		if err != nil {
-			return nil, fmt.Errorf("invalid memory limit: %w", err)
-		}
-		k8sReqs.Limits[corev1.ResourceMemory] = qty
-	}
-	if rr.Limits.CPU != "" {
-		qty, err := resource.ParseQuantity(rr.Limits.CPU)
-		if err != nil {
-			return nil, fmt.Errorf("invalid CPU limit: %w", err)
-		}
-		k8sReqs.Limits[corev1.ResourceCPU] = qty
-	}
-
-	return k8sReqs, nil
 }

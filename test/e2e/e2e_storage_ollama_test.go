@@ -37,9 +37,14 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 
 	// Setup NFS server and provisioner for testing
 	BeforeAll(func() {
-		By("deploying NFS server for testing")
-		cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-server-deployment.yaml")
+		By("deploying NFS server ServiceAccount (for OpenShift SCC)")
+		cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-server-serviceaccount.yaml")
 		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy NFS server ServiceAccount")
+
+		By("deploying NFS server for testing")
+		cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/storage/nfs-server-deployment.yaml")
+		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy NFS server")
 
 		By("waiting for NFS server to be ready")
@@ -126,6 +131,10 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 
 		By("cleaning up NFS server deployment")
 		cmd = exec.Command("kubectl", "delete", "-f", "test/e2e/storage/nfs-server-deployment.yaml", "--wait=false")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up NFS server ServiceAccount")
+		cmd = exec.Command("kubectl", "delete", "-f", "test/e2e/storage/nfs-server-serviceaccount.yaml", "--wait=false")
 		_, _ = utils.Run(cmd)
 	})
 

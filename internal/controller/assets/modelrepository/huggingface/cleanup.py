@@ -29,7 +29,7 @@ def install_packages():
                 f"WARNING: Failed to install {package}: {e}", file=sys.stderr)
 
 
-def delete_model_revision(repo_id: str, revision: str, cache_dir: str = None):
+def delete_model_revision(repo_id: str, revision: str, cache_dir: str):
     """
     Safely delete a specific revision of a Hugging Face model from the local cache
     using scan_cache_dir(), without affecting other revisions.
@@ -37,13 +37,12 @@ def delete_model_revision(repo_id: str, revision: str, cache_dir: str = None):
     Args:
         repo_id (str): Model ID (e.g. "meta-llama/Llama-3-8B")
         revision (str): Commit hash or tag (e.g. "main" or "abcdef123456")
-        cache_dir (str): Optional cache root (defaults to HF_HOME or ~/.cache/huggingface/hub)
+        cache_dir (str): Cache root directory from HF_HOME environment variable
     """
     from huggingface_hub import scan_cache_dir
 
-    # Determine cache directory
-    if cache_dir is None:
-        cache_dir = os.path.join(get_cache_home(), "hub")
+    # Use hub subdirectory for model cache
+    cache_dir = os.path.join(cache_dir, "hub")
 
     print(f"🔍 Scanning cache directory: {cache_dir}")
     cache_info = scan_cache_dir(cache_dir)

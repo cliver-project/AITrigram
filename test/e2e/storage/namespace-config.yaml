@@ -1,0 +1,14 @@
+---
+# Namespace configuration for E2E storage tests
+# The NFS server requires privileged access, so we need to allow privileged pods
+# Apply this before deploying NFS infrastructure
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aitrigram-system
+  labels:
+    # Allow privileged pods in this namespace for NFS server
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged

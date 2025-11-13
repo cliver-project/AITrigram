@@ -86,9 +86,23 @@ spec:
         app: nfs-client-provisioner
     spec:
       serviceAccountName: nfs-client-provisioner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534  # nobody user
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nfs-client-provisioner
           image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Provisioner needs to write to NFS
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+              - ALL
           volumeMounts:
             - name: nfs-client-root
               mountPath: /persistentvolumes

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -110,14 +111,20 @@ func TestJobBuilder_HuggingFace_DefaultConfig(t *testing.T) {
 		t.Errorf("Expected MODEL_NAME='llama2-7b', got '%s'", envMap["MODEL_NAME"])
 	}
 
-	// Check that script is loaded (command should have embedded script)
+	// Check that script is loaded (command should have interpreter, args should have script)
 	if len(container.Command) == 0 {
 		t.Fatal("Expected command to be set")
 	}
 	if container.Command[0] != "python3" {
 		t.Errorf("Expected interpreter 'python3', got '%s'", container.Command[0])
 	}
-	if !strings.Contains(container.Command[2], "huggingface_hub") {
+	if len(container.Args) < 2 {
+		t.Fatal("Expected args to contain ['-c', script]")
+	}
+	if container.Args[0] != "-c" {
+		t.Errorf("Expected args[0] to be '-c', got '%s'", container.Args[0])
+	}
+	if !strings.Contains(container.Args[1], "huggingface_hub") {
 		t.Error("Expected embedded script to contain 'huggingface_hub'")
 	}
 
@@ -173,7 +180,7 @@ func TestJobBuilder_HuggingFace_CustomImage(t *testing.T) {
 	}
 
 	// Should still use embedded script
-	if !strings.Contains(container.Command[2], "huggingface_hub") {
+	if len(container.Args) < 2 || !strings.Contains(container.Args[1], "huggingface_hub") {
 		t.Error("Expected to use embedded script even with custom image")
 	}
 }
@@ -223,10 +230,10 @@ echo "MODEL_ID: $MODEL_ID"
 	}
 
 	// Should use custom script
-	if !strings.Contains(container.Command[2], "Custom download script") {
+	if len(container.Args) < 2 || !strings.Contains(container.Args[1], "Custom download script") {
 		t.Error("Expected custom script to be used")
 	}
-	if !strings.Contains(container.Command[2], "echo \"MODEL_ID: $MODEL_ID\"") {
+	if !strings.Contains(container.Args[1], "echo \"MODEL_ID: $MODEL_ID\"") {
 		t.Error("Expected custom script content")
 	}
 
@@ -269,14 +276,18 @@ func TestJobBuilder_HuggingFace_WithSecret(t *testing.T) {
 		"MODEL_ID": "test-model",
 	}
 
-	secretRef := &corev1.SecretKeySelector{
-		LocalObjectReference: corev1.LocalObjectReference{
-			Name: "my-hf-secret",
+	modelSource := &aitrigramv1.ModelSource{
+		Origin:  aitrigramv1.ModelOriginHuggingFace,
+		ModelId: "test-model",
+		HFTokenSecretRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{
+				Name: "my-hf-secret",
+			},
+			Key: "token",
 		},
-		Key: "token",
 	}
 
-	job, err := builder.BuildDownloadJob("test-job", "default", "test-model-repo", "", "", params, secretRef)
+	job, err := builder.BuildDownloadJob("test-job", "default", "test-model-repo", "", "", params, modelSource)
 	if err != nil {
 		t.Fatalf("Failed to build download job: %v", err)
 	}
@@ -354,7 +365,7 @@ func TestJobBuilder_Ollama_DefaultConfig(t *testing.T) {
 	}
 
 	// Check script contains ollama pull
-	if !strings.Contains(container.Command[2], "ollama pull") {
+	if len(container.Args) < 2 || !strings.Contains(container.Args[1], "ollama pull") {
 		t.Error("Expected Ollama script to contain 'ollama pull'")
 	}
 
@@ -588,7 +599,7 @@ func TestJobBuilder_CleanupJob(t *testing.T) {
 	container := job.Spec.Template.Spec.Containers[0]
 
 	// Should use cleanup script
-	if !strings.Contains(container.Command[2], "cleanup") || !strings.Contains(container.Command[2], "scan_cache_dir") {
+	if len(container.Args) < 2 || !strings.Contains(container.Args[1], "cleanup") || !strings.Contains(container.Args[1], "scan_cache_dir") {
 		t.Error("Expected cleanup script to be used")
 	}
 
@@ -828,17 +839,21 @@ func TestJobBuilder_AllCombinations(t *testing.T) {
 				"MODEL_ID": "test-model",
 			}
 
-			var secretRef *corev1.SecretKeySelector
+			var modelSource *aitrigramv1.ModelSource
 			if tc.hasSecret {
-				secretRef = &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "test-secret",
+				modelSource = &aitrigramv1.ModelSource{
+					Origin:  aitrigramv1.ModelOriginHuggingFace,
+					ModelId: "test-model",
+					HFTokenSecretRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: "test-secret",
+						},
+						Key: "token",
 					},
-					Key: "token",
 				}
 			}
 
-			job, err := builder.BuildDownloadJob("test-job", "default", "test-model-repo", tc.customImage, tc.customScript, params, secretRef)
+			job, err := builder.BuildDownloadJob("test-job", "default", "test-model-repo", tc.customImage, tc.customScript, params, modelSource)
 			if err != nil {
 				t.Fatalf("Failed to build download job: %v", err)
 			}
@@ -893,7 +908,7 @@ func TestJobBuilder_AllCombinations(t *testing.T) {
 
 			// Check custom script
 			if tc.customScript != "" {
-				if !strings.Contains(container.Command[2], "echo") {
+				if len(container.Args) < 2 || !strings.Contains(container.Args[1], "echo") {
 					t.Error("Expected custom script to be used")
 				}
 			}

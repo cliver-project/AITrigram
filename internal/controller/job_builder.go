@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 
+	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 	"github.com/cliver-project/AITrigram/internal/controller/assets"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,7 +39,6 @@ type JobBuilder struct {
 	volumeMount  *corev1.VolumeMount
 	nodeSelector map[string]string
 	nodeAffinity *corev1.NodeAffinity
-	renderer     *TemplateRenderer
 }
 
 // NewJobBuilder creates a new JobBuilder for the specified origin
@@ -76,7 +76,6 @@ func NewJobBuilder(
 		volumeMount:  volumeMount,
 		nodeSelector: nodeSelector,
 		nodeAffinity: nodeAffinity,
-		renderer:     NewTemplateRenderer(),
 	}, nil
 }
 
@@ -88,14 +87,14 @@ func (jb *JobBuilder) BuildDownloadJob(
 	customImage string,
 	customScript string,
 	params map[string]string,
-	secretRef *corev1.SecretKeySelector,
+	modelSource *aitrigramv1.ModelSource,
 ) (*batchv1.Job, error) {
 	container, err := jb.buildContainer(
 		jb.config.Download,
 		customImage,
 		customScript,
 		params,
-		secretRef,
+		modelSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download container: %w", err)
@@ -112,14 +111,14 @@ func (jb *JobBuilder) BuildCleanupJob(
 	customImage string,
 	customScript string,
 	params map[string]string,
-	secretRef *corev1.SecretKeySelector,
+	modelSource *aitrigramv1.ModelSource,
 ) (*batchv1.Job, error) {
 	container, err := jb.buildContainer(
 		jb.config.Cleanup,
 		customImage,
 		customScript,
 		params,
-		secretRef,
+		modelSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build cleanup container: %w", err)
@@ -134,7 +133,7 @@ func (jb *JobBuilder) buildContainer(
 	customImage string,
 	customScript string,
 	params map[string]string,
-	secretRef *corev1.SecretKeySelector,
+	modelSource *aitrigramv1.ModelSource,
 ) (corev1.Container, error) {
 	// Determine the image (custom or default from asset)
 	image := jb.config.Image
@@ -143,18 +142,27 @@ func (jb *JobBuilder) buildContainer(
 	}
 
 	// Build the command and args
-	command, args, err := jb.buildCommand(jobConfig, customScript, params)
+	command, args, err := jb.buildCommand(jobConfig, customScript)
 	if err != nil {
 		return corev1.Container{}, err
 	}
 
 	// Build environment variables
-	env := jb.buildEnvironment(jobConfig, params, secretRef)
+	env := jb.buildEnvironment(jobConfig, params, modelSource)
 
-	// Build resource requirements
-	resources, err := jobConfig.Resources.ToK8sResourceRequirements()
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("failed to convert resources: %w", err)
+	// Get security context from asset config or use default
+	securityContext := jobConfig.SecurityContext
+	if securityContext == nil {
+		// Provide default security context if not specified in asset config
+		securityContext = &corev1.SecurityContext{
+			AllowPrivilegeEscalation: &[]bool{false}[0],
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		}
 	}
 
 	container := corev1.Container{
@@ -165,19 +173,12 @@ func (jb *JobBuilder) buildContainer(
 		Env:             env,
 		VolumeMounts:    []corev1.VolumeMount{*jb.volumeMount},
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: &[]bool{false}[0],
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-			},
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
+		SecurityContext: securityContext,
 	}
 
-	if resources != nil {
-		container.Resources = *resources
+	// Apply resource requirements if specified
+	if jobConfig.Resources != nil {
+		container.Resources = *jobConfig.Resources
 	}
 
 	return container, nil
@@ -187,7 +188,6 @@ func (jb *JobBuilder) buildContainer(
 func (jb *JobBuilder) buildCommand(
 	jobConfig assets.JobConfig,
 	customScript string,
-	params map[string]string,
 ) ([]string, []string, error) {
 	var script string
 	var err error
@@ -204,45 +204,69 @@ func (jb *JobBuilder) buildCommand(
 		}
 	}
 
-	// Convert params map[string]string to map[string]interface{} for template rendering
-	templateParams := make(map[string]interface{})
-	for k, v := range params {
-		templateParams[k] = v
-	}
-
-	// Render template variables in script using Jinja2-style rendering
-	script, err = jb.renderer.RenderModelScript(script, templateParams)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to render script template: %w", err)
-	}
-
-	// Build command based on interpreter
+	// Build command and args
+	// Scripts use environment variables directly - no template rendering needed
+	// Command = interpreter executable, Args = script execution arguments
 	interpreter := jobConfig.Interpreter
-	command := []string{interpreter, "-c", script}
-	return command, nil, nil
+	command := []string{interpreter}
+	args := []string{"-c", script}
+	return command, args, nil
 }
 
 // buildEnvironment creates the environment variable list
 func (jb *JobBuilder) buildEnvironment(
 	jobConfig assets.JobConfig,
 	params map[string]string,
-	secretRef *corev1.SecretKeySelector,
+	modelSource *aitrigramv1.ModelSource,
 ) []corev1.EnvVar {
 	env := []corev1.EnvVar{}
 
-	// Add environment variables from asset config
+	// Add environment variables from asset config with valueFrom resolution
 	for _, e := range jobConfig.Environment {
-		value := e.Value
-		if e.ValueFrom == "mountPath" {
-			value = jb.mountPath
+		// Handle different valueFrom sources
+		if e.ValueFrom != "" {
+			switch {
+			case e.ValueFrom == "mountPath":
+				// Resolve mountPath to actual mount path
+				env = append(env, corev1.EnvVar{
+					Name:  e.Name,
+					Value: jb.mountPath,
+				})
+
+			case e.IsSecretRef():
+				// Resolve secret reference from ModelSource field
+				// Format: "secret:hfTokenSecretRef" -> ModelSource.HFTokenSecretRef
+				fieldName := e.GetSecretType()
+				secretRef := jb.getSecretRefFromModelSource(modelSource, fieldName)
+				if secretRef != nil {
+					// User provided secret via CRD
+					env = append(env, corev1.EnvVar{
+						Name: e.Name,
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: secretRef,
+						},
+					})
+				}
+				// If secret not provided, skip this env var (it's optional)
+
+			default:
+				// Unknown valueFrom, use as literal value
+				env = append(env, corev1.EnvVar{
+					Name:  e.Name,
+					Value: e.ValueFrom,
+				})
+			}
+		} else if e.Value != "" {
+			// Static value
+			env = append(env, corev1.EnvVar{
+				Name:  e.Name,
+				Value: e.Value,
+			})
 		}
-		env = append(env, corev1.EnvVar{
-			Name:  e.Name,
-			Value: value,
-		})
+		// If both Value and ValueFrom are empty, skip (will come from params)
 	}
 
-	// Add parameters as environment variables
+	// Add parameters as environment variables (MODEL_ID, REVISION, etc.)
 	for key, value := range params {
 		env = append(env, corev1.EnvVar{
 			Name:  key,
@@ -250,35 +274,24 @@ func (jb *JobBuilder) buildEnvironment(
 		})
 	}
 
-	// Add secret environment variables from asset config
-	// These are optional secrets that the asset expects (like HF_TOKEN)
-	for _, assetSecretRef := range jobConfig.SecretRefs {
-		// If user provided a secret for this environment variable, use it
-		if secretRef != nil && assetSecretRef.Name == "HF_TOKEN" {
-			env = append(env, corev1.EnvVar{
-				Name: assetSecretRef.Name,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: secretRef,
-				},
-			})
-		} else {
-			// Otherwise, try to use a default secret if it exists (marked as optional)
-			env = append(env, corev1.EnvVar{
-				Name: assetSecretRef.Name,
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: assetSecretRef.Name,
-						},
-						Key:      assetSecretRef.SecretKey,
-						Optional: &assetSecretRef.Optional,
-					},
-				},
-			})
-		}
+	return env
+}
+
+// getSecretRefFromModelSource retrieves a secret reference from ModelSource by field name
+func (jb *JobBuilder) getSecretRefFromModelSource(modelSource *aitrigramv1.ModelSource, fieldName string) *corev1.SecretKeySelector {
+	if modelSource == nil {
+		return nil
 	}
 
-	return env
+	// Map field names to actual ModelSource fields
+	// This is extensible - add new secret fields here as needed
+	switch fieldName {
+	case "hfTokenSecretRef":
+		return modelSource.HFTokenSecretRef
+	// Add future secret fields here:
+	default:
+		return nil
+	}
 }
 
 // buildJob creates the Job manifest with labels

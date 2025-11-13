@@ -307,16 +307,11 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		return nil, fmt.Errorf("failed to create job builder: %w", err)
 	}
 
-	// Prepare parameters for the download script
+	// Prepare parameters for the download script, these all will be injected as environment variables to the download job
 	params := map[string]string{
 		"MODEL_ID":   modelRepo.Spec.Source.ModelId,
 		"MODEL_NAME": modelRepo.Spec.ModelName,
 		"MOUNT_PATH": mountPath,
-	}
-
-	// Add MODEL_NAME environment variable if needed (defaults to MODEL_ID for Ollama)
-	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
-		params["MODEL_NAME"] = modelRepo.Spec.Source.ModelId
 	}
 
 	// Build the download job using the asset system
@@ -328,7 +323,7 @@ func (r *ModelRepositoryReconciler) createDownloadJob(ctx context.Context, model
 		modelRepo.Spec.DownloadImage,
 		modelRepo.Spec.DownloadScripts,
 		params,
-		modelRepo.Spec.Source.HFTokenSecretRef,
+		&modelRepo.Spec.Source,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download job: %w", err)
@@ -376,11 +371,23 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 
 	// Only proceed with cleanup if provider was successfully created
 	if provider != nil {
-		// Create a cleanup job to delete the model files from the storage
-		if err := r.createCleanupJob(ctx, modelRepo, provider); err != nil {
-			logger.Error(err, "Failed to create cleanup job, will still remove finalizer")
-			// We still want to remove the finalizer even if cleanup fails
-			// to avoid blocking deletion, but log the error
+		// Only create cleanup job if model was actually downloaded
+		// Skip cleanup if status is empty or pending (no files to clean up)
+		shouldCleanup := modelRepo.Status.Phase != "" &&
+			modelRepo.Status.Phase != aitrigramv1.ModelRepositoryPhasePending
+
+		if shouldCleanup {
+			logger.Info("Creating cleanup job to remove model files",
+				"phase", modelRepo.Status.Phase)
+			// Create a cleanup job to delete the model files from the storage
+			if err := r.createCleanupJob(ctx, modelRepo, provider); err != nil {
+				logger.Error(err, "Failed to create cleanup job, will still remove finalizer")
+				// We still want to remove the finalizer even if cleanup fails
+				// to avoid blocking deletion, but log the error
+			}
+		} else {
+			logger.Info("Skipping cleanup job - model was never downloaded",
+				"phase", modelRepo.Status.Phase)
 		}
 
 		// Cleanup storage if provider supports it
@@ -463,11 +470,6 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		"MOUNT_PATH": mountPath,
 	}
 
-	// Add MODEL_NAME environment variable if needed (defaults to MODEL_ID for Ollama)
-	if modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginOllama {
-		params["MODEL_NAME"] = modelRepo.Spec.Source.ModelId
-	}
-
 	// Build the cleanup job using the asset system
 	// Pass existing CRD fields for customization
 	job, err := builder.BuildCleanupJob(
@@ -477,7 +479,7 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 		modelRepo.Spec.DownloadImage, // Reuse download image for cleanup
 		modelRepo.Spec.DeleteScripts,
 		params,
-		modelRepo.Spec.Source.HFTokenSecretRef,
+		&modelRepo.Spec.Source,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build cleanup job: %w", err)
@@ -488,8 +490,24 @@ func (r *ModelRepositoryReconciler) createCleanupJob(ctx context.Context, modelR
 	ttl := int32(600)
 	job.Spec.TTLSecondsAfterFinished = &ttl
 
+	// Check if cleanup job already exists
+	existingJob := &batchv1.Job{}
+	err = r.Get(ctx, client.ObjectKey{Name: jobName, Namespace: namespace}, existingJob)
+	if err == nil {
+		// Job already exists, nothing to do
+		log.FromContext(ctx).Info("Cleanup job already exists, skipping creation", "job", jobName)
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check existing cleanup job: %w", err)
+	}
+
 	// Create the cleanup job (don't set owner reference as the owner is being deleted)
-	return r.Create(ctx, job)
+	if err := r.Create(ctx, job); err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create cleanup job: %w", err)
+	}
+
+	return nil
 }
 
 // updateModelRepoStatus updates the ModelRepository status with retry logic to handle conflicts
