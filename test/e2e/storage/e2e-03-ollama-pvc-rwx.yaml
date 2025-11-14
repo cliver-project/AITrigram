@@ -1,7 +1,8 @@
 ---
 # E2E Test: ModelRepository with PVC ReadWriteMany (RWX) storage for Ollama
-# Requires a storage class that supports ReadWriteMany access mode
-# Examples: nfs-client, rook-cephfs, AWS EFS, Azure Files
+# Uses the default storage class if it supports ReadWriteMany access mode
+# Requires network storage like: NFS, CephFS, AWS EFS, Azure Files, GlusterFS
+# Will be skipped on clusters with block storage only (AWS EBS, GCP PD, Azure Disk)
 #
 # Note: The PVC will be automatically created by the controller in the
 # aitrigram-system namespace (where the controller runs)
@@ -21,6 +22,6 @@ spec:
     persistentVolumeClaim:
       size: 2Gi
       accessMode: ReadWriteMany
-      storageClassName: nfs-client  # Change to your RWX storage class
+      # storageClassName not specified - uses cluster default storage class
 
   autoDownload: true

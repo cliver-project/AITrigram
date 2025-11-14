@@ -1,6 +1,7 @@
 ---
 # E2E Test: ModelRepository with PVC ReadWriteOnce (RWO) storage for Ollama
-# Works with most storage classes including local-path, standard, gp2, etc.
+# Uses the cluster's default storage class
+# Works with most storage classes: AWS EBS (gp2/gp3), GCP PD, Azure Disk, local-path, etc.
 # The model download and LLMEngine pods will be pinned to the same node
 #
 # Note: The PVC will be automatically created by the controller in the
@@ -22,7 +23,7 @@ spec:
     persistentVolumeClaim:
       size: 2Gi
       accessMode: ReadWriteOnce
-      storageClassName: standard  # Use default or change to your RWO storage class
+      # storageClassName not specified - uses cluster default storage class
 
   autoDownload: true
 
