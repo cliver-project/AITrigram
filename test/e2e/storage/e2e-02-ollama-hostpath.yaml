@@ -13,11 +13,9 @@ spec:
     modelId: qwen2.5:0.5b  # Small model (~0.5GB) for faster testing
 
   storage:
-    type: HostPath
+    size: "10Gi"
+    storageClass: "hostpath"
     mountPath: /data/models
-    hostPath:
-      path: /mnt/aitrigram-models/e2e-test
-      type: DirectoryOrCreate
 
   autoDownload: true
 

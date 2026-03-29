@@ -1,0 +1,38 @@
+---
+# E2E Test: Full inference test with Ollama + HostPath storage
+# This tests:
+# 1. ModelRepository deployment with HostPath
+# 2. LLMEngine deployment
+# 3. Inference requests
+
+# ModelRepository for a small Ollama model
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: ollama-hostpath-inference-test
+spec:
+  source:
+    origin: ollama
+    # Using qwen2.5:0.5b - very small model (~395MB) for fast testing
+    modelId: qwen2.5:0.5b
+
+  storage:
+    size: "10Gi"
+    storageClass: "hostpath"
+    mountPath: /data/models
+
+  autoDownload: true
+
+---
+# LLMEngine for Ollama
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: LLMEngine
+metadata:
+  name: ollama-hostpath-inference-test
+  namespace: default
+spec:
+  engineType: ollama
+  modelRefs:
+    - name: ollama-hostpath-inference-test
+  replicas: 1
+  servicePort: 11434

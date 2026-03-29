@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder
+  labels:
+    app: placeholder
+    model: placeholder
+    engine-type: vllm
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: placeholder
+      model: placeholder
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: placeholder
+        model: placeholder
+        engine-type: vllm
+    spec:
+      containers:
+      - name: llm-engine
+        image: vllm/vllm-openai:latest
+        args: []
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: HF_HOME
+          value: /data/models
+        - name: TRANSFORMERS_CACHE
+          value: /data/models
+        - name: HUGGINGFACE_HUB_CACHE
+          value: /data/models/hub
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: TRANSFORMERS_OFFLINE
+          value: "1"
+        - name: HF_HUB_DISABLE_SYMLINKS_WARNING
+          value: "1"
+        - name: TMPDIR
+          value: /tmp/vllm-cache
+        - name: BITSANDBYTES_CACHE
+          value: /tmp/vllm-cache/bnb
+        - name: VLLM_CACHE_ROOT
+          value: /tmp/vllm-cache/kernels
+        volumeMounts:
+        - name: vllm-cache-root
+          mountPath: /tmp/vllm-cache
+        - name: shm
+          mountPath: /dev/shm
+        - name: vllm-config
+          mountPath: /etc/vllm
+          readOnly: true
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        securityContext:
+          privileged: false
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: vllm-cache-root
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+      - name: vllm-config
+        configMap:
+          name: placeholder-vllm-config
+      nodeSelector: {}
+      tolerations: []
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

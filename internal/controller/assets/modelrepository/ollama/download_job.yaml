@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: placeholder
+  namespace: placeholder
+  labels:
+    app: llm-downloader
+    modelrepository.aitrigram.cliver-project.github.io/name: placeholder
+    app.kubernetes.io/managed-by: modelrepository-controller
+spec:
+  template:
+    metadata:
+      labels:
+        app: llm-downloader
+        modelrepository.aitrigram.cliver-project.github.io/name: placeholder
+        app.kubernetes.io/managed-by: modelrepository-controller
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: worker
+        image: ollama/ollama:latest
+        command:
+        - bash
+        args: []  # Will be populated by adapter with script content
+        env: []  # Will be populated by adapter
+        volumeMounts: []  # Will be populated by adapter
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 1000m
+          limits:
+            memory: 4Gi
+            cpu: 2000m
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+      volumes: []  # Will be populated by adapter
+      nodeSelector: {}  # Will be populated by adapter

@@ -57,7 +57,7 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get download job")
 				jobs := utils.GetNonEmptyLines(output)
-				g.Expect(len(jobs)).To(BeNumerically(">", 0), "Expected at least 1 download job")
+				g.Expect(jobs).ToNot(BeEmpty(), "Expected at least 1 download job")
 				_, _ = fmt.Fprintf(GinkgoWriter, "Found download job: %v\n", jobs)
 			}).Should(Succeed())
 
@@ -193,7 +193,6 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 
 	Context("PVC ReadWriteOnce (RWO) Storage", func() {
 		const modelRepoName = "ollama-pvc-rwo-test"
-		const pvcName = "model-storage-rwo-test"
 
 		It("should download Ollama model successfully with RWO PVC storage", func() {
 			By("checking if a default storage class is available")

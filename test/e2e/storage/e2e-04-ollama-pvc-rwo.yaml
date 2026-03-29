@@ -18,12 +18,9 @@ spec:
     modelId: qwen2.5:0.5b  # Small model for faster testing
 
   storage:
-    type: PersistentVolumeClaim
+    size: "2Gi"
+    storageClass: "auto"  # Auto-detects and uses available storage (prefers RWX, falls back to RWO)
     mountPath: /data/models
-    persistentVolumeClaim:
-      size: 2Gi
-      accessMode: ReadWriteOnce
-      # storageClassName not specified - uses cluster default storage class
 
   autoDownload: true
 

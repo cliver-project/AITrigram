@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,10 +38,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
+	"github.com/cliver-project/AITrigram/internal/controller/adapters"
+	"github.com/cliver-project/AITrigram/internal/controller/component"
+	"github.com/cliver-project/AITrigram/internal/controller/storage"
 )
 
 const (
-	LLMEngineFinalizer = "llmengine.aitrigram.cliver-project.github.io/finalizer"
+	LLMEngineFinalizer = storage.LLMEngineFinalizer
 )
 
 // LLMEngineReconciler reconciles a LLMEngine object
@@ -58,6 +60,7 @@ type LLMEngineReconciler struct {
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
@@ -95,23 +98,27 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Check if all models are downloaded
 	for _, modelRepo := range modelRepos {
-		if modelRepo.Status.Phase != aitrigramv1.ModelRepositoryPhaseDownloaded {
+		if modelRepo.Status.Phase != aitrigramv1.DownloadPhaseReady {
 			msg := fmt.Sprintf("Waiting for ModelRepository %s (phase: %s)", modelRepo.Name, modelRepo.Status.Phase)
-			//TODO maybe trigger the downloading if the autodownload is false
+			// TODO maybe trigger the downloading if the autodownload is false
 			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
 		}
 
 		// For storage that requires node affinity, ensure BoundNodeName is set
-		if requiresNodeAffinity(modelRepo) {
-			if modelRepo.Status.BoundNodeName == "" {
+		if storage.RequiresNodeAffinity(modelRepo) {
+			boundNode := ""
+			if modelRepo.Status.Storage != nil {
+				boundNode = modelRepo.Status.Storage.BoundNodeName
+			}
+			if boundNode == "" {
 				msg := fmt.Sprintf("Waiting for ModelRepository %s to bind to a node (storage type: %s requires node affinity)",
-					modelRepo.Name, getStorageType(modelRepo))
+					modelRepo.Name, storage.GetStorageType(modelRepo))
 				return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForNodeBinding", msg)
 			}
 			logger.Info("ModelRepository is bound to node",
 				"modelRepo", modelRepo.Name,
-				"boundNode", modelRepo.Status.BoundNodeName,
-				"storageType", getStorageType(modelRepo))
+				"boundNode", boundNode,
+				"storageType", storage.GetStorageType(modelRepo))
 		}
 	}
 
@@ -120,9 +127,12 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// If any ModelRepository requires node affinity, validate GPU on that specific node
 		var requiredNodeName string
 		for _, modelRepo := range modelRepos {
-			if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName != "" {
-				requiredNodeName = modelRepo.Status.BoundNodeName
-				break
+			if storage.RequiresNodeAffinity(modelRepo) {
+				boundNode := storage.GetBoundNodeName(modelRepo)
+				if boundNode != "" {
+					requiredNodeName = boundNode
+					break
+				}
 			}
 		}
 
@@ -138,29 +148,43 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for _, modelRepo := range modelRepos {
 		// Double-check prerequisites before creating deployment
 		// This ensures we don't create a deployment that will fail to schedule
-		if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName == "" {
+		if storage.RequiresNodeAffinity(modelRepo) && storage.GetBoundNodeName(modelRepo) == "" {
 			msg := fmt.Sprintf("Cannot create deployment: ModelRepository %s not yet bound to a node (storage: %s)",
-				modelRepo.Name, getStorageType(modelRepo))
+				modelRepo.Name, storage.GetStorageType(modelRepo))
 			logger.Info(msg, "modelRepo", modelRepo.Name)
 			return r.updateStatus(ctx, llmEngine, "Pending", "NodeBindingRequired", msg)
 		}
 
-		// Create or update Deployment for this model
-		deployment, err := r.createOrUpdateDeploymentForModel(ctx, llmEngine, modelRepo)
-		if err != nil {
-			return r.updateStatus(ctx, llmEngine, "Error", "DeploymentFailed",
-				fmt.Sprintf("Failed to create deployment for model %s: %v", modelRepo.Name, err))
+		// Create component for this model
+		// ConfigMap (if needed) will be created by the component's manifest adapters
+		comp := adapters.NewModelComponent(llmEngine, modelRepo)
+
+		// Create component context
+		compCtx := component.LLMEngineContext{
+			Context:   ctx,
+			Client:    r.Client,
+			Scheme:    r.Scheme,
+			LLMEngine: llmEngine,
+			ModelRepo: modelRepo,
+			Namespace: llmEngine.Namespace,
 		}
 
-		// Create or update Service for this model
-		if err := r.createOrUpdateServiceForModel(ctx, llmEngine, modelRepo); err != nil {
-			return r.updateStatus(ctx, llmEngine, "Error", "ServiceFailed",
-				fmt.Sprintf("Failed to create service for model %s: %v", modelRepo.Name, err))
+		// Reconcile component (creates/updates Deployment and Service)
+		if err := comp.Reconcile(compCtx); err != nil {
+			return r.updateStatus(ctx, llmEngine, "Error", "ReconcileFailed",
+				fmt.Sprintf("Failed to reconcile model %s: %v", modelRepo.Name, err))
 		}
 
-		// Count ready deployments
-		if deployment.Status.ReadyReplicas > 0 {
-			totalReady++
+		// Check deployment readiness
+		deploymentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+		deployment := &appsv1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      deploymentName,
+			Namespace: llmEngine.Namespace,
+		}, deployment); err == nil {
+			if deployment.Status.ReadyReplicas > 0 {
+				totalReady++
+			}
 		}
 	}
 
@@ -181,14 +205,14 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func (r *LLMEngineReconciler) fetchModelRepositories(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) ([]*aitrigramv1.ModelRepository, error) {
-	var modelRepos []*aitrigramv1.ModelRepository
+	modelRepos := make([]*aitrigramv1.ModelRepository, 0, len(llmEngine.Spec.ModelRefs))
 
 	for _, modelRef := range llmEngine.Spec.ModelRefs {
 		modelRepo := &aitrigramv1.ModelRepository{}
 		// ModelRepository is cluster-scoped, so no namespace
-		if err := r.Get(ctx, types.NamespacedName{Name: modelRef}, modelRepo); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: modelRef.Name}, modelRepo); err != nil {
 			if errors.IsNotFound(err) {
-				return nil, fmt.Errorf("ModelRepository %s not found", modelRef)
+				return nil, fmt.Errorf("ModelRepository %s not found", modelRef.Name)
 			}
 			return nil, err
 		}
@@ -196,36 +220,6 @@ func (r *LLMEngineReconciler) fetchModelRepositories(ctx context.Context, llmEng
 	}
 
 	return modelRepos, nil
-}
-
-func (r *LLMEngineReconciler) createOrUpdateDeploymentForModel(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) (*appsv1.Deployment, error) {
-	deployment := r.buildDeploymentForModel(llmEngine, modelRepo)
-
-	// Set owner reference
-	if err := ctrl.SetControllerReference(llmEngine, deployment, r.Scheme); err != nil {
-		return nil, err
-	}
-
-	// Create or update
-	existing := &appsv1.Deployment{}
-	err := r.Get(ctx, types.NamespacedName{Name: deployment.Name, Namespace: deployment.Namespace}, existing)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, deployment); err != nil {
-				return nil, err
-			}
-			return deployment, nil
-		}
-		return nil, err
-	}
-
-	// Update if needed
-	existing.Spec = deployment.Spec
-	if err := r.Update(ctx, existing); err != nil {
-		return nil, err
-	}
-
-	return existing, nil
 }
 
 // validateGPUAvailability validates that GPU nodes are available in the cluster
@@ -303,8 +297,8 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 	}
 
 	// Find nodes with GPU resources
-	var suitableNodes []string
-	var gpuNodes []string
+	suitableNodes := make([]string, 0, len(nodeList.Items))
+	gpuNodes := make([]string, 0, len(nodeList.Items))
 
 	for _, node := range nodeList.Items {
 		// Check if node has GPU resources
@@ -377,182 +371,6 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 		"requestedGPUs", requestedGPUs)
 
 	return nil
-}
-
-func (r *LLMEngineReconciler) buildDeploymentForModel(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) *appsv1.Deployment {
-	logger := log.FromContext(context.Background())
-
-	// Get replicas from spec, default to 1
-	replicas := int32(1)
-	if llmEngine.Spec.Replicas != nil {
-		replicas = *llmEngine.Spec.Replicas
-	}
-
-	// Build workload configuration using the new workload struct
-	workload, _ := BuildLLMEngineWorkload(llmEngine, modelRepo)
-
-	// Generate unique name for this deployment (engine-name + model-name)
-	deploymentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
-
-	// Build container with resources and security context
-	container := corev1.Container{
-		Name:  "llm-engine",
-		Image: workload.Image,
-		Args:  workload.Args,
-		Env:   workload.Envs,
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          "http",
-				ContainerPort: workload.PodPort,
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
-		VolumeMounts:    workload.Storage.VolumeMounts,
-		Resources:       workload.Resources,
-		SecurityContext: workload.SecurityContext,
-	}
-
-	// Build pod spec with node selector and tolerations for GPU
-	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{container},
-		Volumes:    workload.Storage.Volumes,
-		HostIPC:    llmEngine.Spec.HostIPC,
-	}
-
-	// Initialize nodeSelector map
-	nodeSelector := make(map[string]string)
-
-	// For single-node storage (HostPath or ReadWriteOnce PVC), enforce node affinity
-	// to ensure the inference pod runs on the same node as the download job
-	if requiresNodeAffinity(modelRepo) && modelRepo.Status.BoundNodeName != "" {
-		nodeSelector["kubernetes.io/hostname"] = modelRepo.Status.BoundNodeName
-		logger.Info("Adding node affinity for single-node storage",
-			"deployment", deploymentName,
-			"boundNode", modelRepo.Status.BoundNodeName,
-			"storageType", getStorageType(modelRepo))
-	}
-
-	// Add GPU node selector and tolerations if GPU is enabled
-	if workload.RequestGPU {
-		// Merge GPU node selectors with storage node selector
-		for k, v := range workload.NodeSelector {
-			// Check if there's a conflict
-			if existingValue, exists := nodeSelector[k]; exists && existingValue != v {
-				logger.Error(fmt.Errorf("node selector conflict"),
-					"GPU node selector conflicts with storage node requirement",
-					"key", k,
-					"gpuValue", v,
-					"storageValue", existingValue,
-					"deployment", deploymentName)
-				// Storage node requirement takes precedence for data locality
-			} else {
-				nodeSelector[k] = v
-			}
-		}
-
-		if len(nodeSelector) > 0 {
-			podSpec.NodeSelector = nodeSelector
-		}
-
-		if len(workload.Tolerations) > 0 {
-			podSpec.Tolerations = workload.Tolerations
-		}
-	} else {
-		// CPU-only: just apply the storage-based node selector if any
-		if len(nodeSelector) > 0 {
-			podSpec.NodeSelector = nodeSelector
-		}
-	}
-
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName,
-			Namespace: llmEngine.Namespace,
-			Labels: map[string]string{
-				"app":         llmEngine.Name,
-				"model":       modelRepo.Name,
-				"engine-type": string(llmEngine.Spec.EngineType),
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app":   llmEngine.Name,
-					"model": modelRepo.Name,
-				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":         llmEngine.Name,
-						"model":       modelRepo.Name,
-						"engine-type": string(llmEngine.Spec.EngineType),
-					},
-				},
-				Spec: podSpec,
-			},
-		},
-	}
-
-	return deployment
-}
-
-func (r *LLMEngineReconciler) createOrUpdateServiceForModel(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) error {
-	// Build workload configuration to get port information
-	workload, _ := BuildLLMEngineWorkload(llmEngine, modelRepo)
-
-	servicePort := workload.ServicePort
-	targetPort := workload.PodPort
-
-	// Generate unique name for this service (engine-name + model-name)
-	serviceName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName,
-			Namespace: llmEngine.Namespace,
-			Labels: map[string]string{
-				"app":   llmEngine.Name,
-				"model": modelRepo.Name,
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app":   llmEngine.Name,
-				"model": modelRepo.Name,
-			},
-			Type: corev1.ServiceTypeClusterIP,
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       servicePort,
-					TargetPort: intstr.FromInt(int(targetPort)),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
-		},
-	}
-
-	// Set owner reference
-	if err := ctrl.SetControllerReference(llmEngine, service, r.Scheme); err != nil {
-		return err
-	}
-
-	// Create or update
-	existing := &corev1.Service{}
-	err := r.Get(ctx, types.NamespacedName{Name: service.Name, Namespace: service.Namespace}, existing)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(ctx, service)
-		}
-		return err
-	}
-
-	// Update if needed
-	existing.Spec.Ports = service.Spec.Ports
-	existing.Spec.Selector = service.Spec.Selector
-	return r.Update(ctx, existing)
 }
 
 func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, phase, reason, message string) (ctrl.Result, error) {
@@ -629,7 +447,7 @@ func (r *LLMEngineReconciler) modelRepositoryToLLMEngine(ctx context.Context, ob
 	var requests []reconcile.Request
 	for _, llmEngine := range llmEngineList.Items {
 		for _, modelRef := range llmEngine.Spec.ModelRefs {
-			if modelRef == modelRepo.Name {
+			if modelRef.Name == modelRepo.Name {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      llmEngine.Name,

@@ -3,11 +3,13 @@
 HuggingFace model download script.
 
 Environment variables:
-  - HF_HOME: Cache directory (set by operator)
-  - HF_HUB_CACHE: Hub cache directory (set by operator)
+  - HF_HOME: Target directory for downloaded models (set by operator)
   - HF_TOKEN: Optional authentication token
   - MODEL_ID: Model identifier (e.g., "meta-llama/Llama-2-7b-hf")
-  - REVISION: Optional model revision/tag (defaults to "main")
+  - REVISION_ID: Optional model revision/tag (defaults to "main")
+                  Can be a branch name, tag, or commit hash.
+                  When spec.revision is configured in ModelRepository,
+                  this maps to spec.revision.revisions[].ref
 """
 
 import os
@@ -42,8 +44,8 @@ def main():
         sys.exit(1)
 
     hf_home = os.environ.get('HF_HOME', '/data/models')
-    token = os.environ.get('HF_TOKEN')
-    revision = os.environ.get('REVISION', 'main')
+    token = os.environ.get('HF_TOKEN', False)
+    revision = os.environ.get('REVISION_ID', 'main')
 
     print(f"Downloading model: {model_id} (revision: {revision})")
     print(f"Target directory: {hf_home}")
@@ -57,7 +59,7 @@ def main():
         snapshot_download(
             repo_id=model_id,
             revision=revision,
-            cache_dir=hf_home,
+            local_dir=hf_home,
             token=token,
             resume_download=True,
         )

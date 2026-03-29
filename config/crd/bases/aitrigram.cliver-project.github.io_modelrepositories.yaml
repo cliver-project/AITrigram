@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: modelrepositories.aitrigram.cliver-project.github.io
 spec:
   group: aitrigram.cliver-project.github.io
@@ -50,7 +50,8 @@ spec:
                 description: |-
                   DeleteScripts specifies custom scripts to run for deleting the model when the ModelRepository is deleted
                   If not specified, default scripts will be used based on the source origin
-                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+
+                  It supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
                   Can be either bash or Python script (auto-detected)
                 type: string
               downloadImage:
@@ -62,7 +63,8 @@ spec:
                 description: |-
                   DownloadScripts specifies custom scripts to run for downloading the model
                   If not specified, default scripts will be used based on the source origin
-                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+
+                  It supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
                   Can be either bash or Python script (auto-detected)
                 type: string
               modelName:
@@ -75,37 +77,60 @@ spec:
                   type: string
                 description: |-
                   NodeSelector specifies node selector requirements for scheduling download and cleanup jobs
-                  This is particularly important when using HostPath storage to ensure jobs run on the correct node
+                  This is particularly important when using the storages which needs to ensure jobs run on the correct nodes
                   Example: {"kubernetes.io/hostname": "kind-control-plane"}
+                type: object
+              revision:
+                description: |-
+                  Revision specifies the revision management configuration
+                  When not specified, defaults to a single revision based on the model source origin
+                properties:
+                  current:
+                    default: main
+                    description: |-
+                      Current is the currently active revision that new LLMEngines will use by default
+                      Can be a tag, branch, or commit hash
+                      Defaults to "main" for HuggingFace
+                    type: string
+                  revisions:
+                    description: |-
+                      Revisions is a list of revisions to track and maintain
+                      Each revision will be downloaded and stored separately
+                    items:
+                      description: RevisionReference references a specific model revision
+                      properties:
+                        name:
+                          description: Name is a user-friendly name for this revision
+                            (e.g., "v1.0.0", "stable")
+                          type: string
+                        ref:
+                          description: |-
+                            Ref is the actual reference (tag, branch, or commit hash)
+                            For HuggingFace: git ref
+                            For other sources: version identifier
+                          type: string
+                      required:
+                      - name
+                      - ref
+                      type: object
+                    type: array
                 type: object
               source:
                 description: Source defines where to download the model from
                 properties:
-                  hfTokenSecretRef:
-                    description: HFTokenSecretRef is specific to huggingface, other
-                      types may have their own way to access the model
-                    properties:
-                      key:
-                        description: The key of the secret to select from.  Must be
-                          a valid secret key.
-                        type: string
-                      name:
-                        default: ""
-                        description: |-
-                          Name of the referent.
-                          This field is effectively required, but due to backwards compatibility is
-                          allowed to be empty. Instances of this type with an empty value here are
-                          almost certainly wrong.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                        type: string
-                      optional:
-                        description: Specify whether the Secret or its key must be
-                          defined
-                        type: boolean
-                    required:
-                    - key
-                    type: object
-                    x-kubernetes-map-type: atomic
+                  hfTokenSecret:
+                    description: |-
+                      HFTokenSecret is the name of the secret containing the HuggingFace token
+                      The secret should exist in the controller's namespace
+                      Only used when origin is "huggingface"
+                    type: string
+                  hfTokenSecretKey:
+                    default: HFToken
+                    description: |-
+                      HFTokenSecretKey is the key within the secret that contains the HuggingFace token
+                      Defaults to "HFToken" if not specified
+                      Only used when HFTokenSecret is specified
+                    type: string
                   modelId:
                     description: ModelId is the identifier of the model within the
                       origin
@@ -113,200 +138,75 @@ spec:
                   origin:
                     default: huggingface
                     description: Origin specifies the source origin (huggingface,
-                      gguf, local, ollama)
+                      ollama)
                     enum:
                     - huggingface
-                    - gguf
-                    - local
                     - ollama
                     type: string
                 required:
                 - modelId
-                - origin
                 type: object
               storage:
                 description: |-
                   Storage configuration for the model
                   This defines where and how the model files are stored, the LLMEngine may have different storage than this one, although it has option to reuse this storage.
                 properties:
-                  hostPath:
-                    description: |-
-                      HostPath storage configuration
-                      Required when Type is HostPath
-                    properties:
-                      nodeName:
-                        description: |-
-                          NodeName specifies which node to use for HostPath storage
-                          If not specified, the download job can run on any node, and the
-                          BoundNodeName will be set in status after the job completes
-                        type: string
-                      path:
-                        description: Path on the host node's filesystem
-                        type: string
-                      type:
-                        description: |-
-                          Type of HostPath volume
-                          DirectoryOrCreate creates the directory if it doesn't exist
-                          Directory requires the directory to exist
-                        enum:
-                        - DirectoryOrCreate
-                        - Directory
-                        - File
-                        - Socket
-                        - CharDevice
-                        - BlockDevice
-                        type: string
-                    required:
-                    - path
-                    type: object
                   mountPath:
+                    default: /data/models
                     description: |-
                       MountPath is the path where models will be stored/mounted inside containers
                       Defaults to /data/models if not specified
+                      The data of this Model is normally under this path
                     type: string
-                  nfs:
-                    description: |-
-                      NFS storage configuration
-                      Required when Type is NFS
-                    properties:
-                      path:
-                        description: Path exported by the NFS server
-                        type: string
-                      readOnly:
-                        description: |-
-                          ReadOnly mounts the NFS volume as read-only
-                          Note: Download jobs require write access, so this should typically be false
-                        type: boolean
-                      server:
-                        description: Server is the hostname or IP address of the NFS
-                          server
-                        type: string
-                    required:
-                    - path
-                    - server
-                    type: object
-                  persistentVolumeClaim:
-                    description: |-
-                      PersistentVolumeClaim storage configuration
-                      Required when Type is PersistentVolumeClaim
-                      if existingClaim is specified, a new PVC will not be created, and the operator will try to search it within the same namespace as the ModelRepository CR, typically it is 'aitrigram-system'.
-                      otherwise, a new PVC will be created in the same namespace as the ModelRepository CR.
-                    properties:
-                      accessMode:
-                        default: ReadWriteMany
-                        description: |-
-                          AccessMode for the PVC
-                          ReadWriteMany (RWX) allows multiple nodes to mount the volume
-                          ReadWriteOnce (RWO) binds to a single node
-                        enum:
-                        - ReadWriteMany
-                        - ReadWriteOnce
-                        type: string
-                      existingClaim:
-                        description: |-
-                          ExistingClaim references an existing PVC instead of creating a new one
-                          When specified, Size, StorageClassName, and AccessMode are ignored
-                        type: string
-                      retainPolicy:
-                        description: |-
-                          RetainPolicy determines what happens to the PVC when ModelRepository is deleted
-                          "Delete" removes the PVC (default for newly created PVCs)
-                          "Retain" keeps the PVC (default for existingClaim)
-                        enum:
-                        - Delete
-                        - Retain
-                        type: string
-                      selector:
-                        description: Selector is used to find matching PersistentVolumes
-                        properties:
-                          matchExpressions:
-                            description: matchExpressions is a list of label selector
-                              requirements. The requirements are ANDed.
-                            items:
-                              description: |-
-                                A label selector requirement is a selector that contains values, a key, and an operator that
-                                relates the key and values.
-                              properties:
-                                key:
-                                  description: key is the label key that the selector
-                                    applies to.
-                                  type: string
-                                operator:
-                                  description: |-
-                                    operator represents a key's relationship to a set of values.
-                                    Valid operators are In, NotIn, Exists and DoesNotExist.
-                                  type: string
-                                values:
-                                  description: |-
-                                    values is an array of string values. If the operator is In or NotIn,
-                                    the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                    the values array must be empty. This array is replaced during a strategic
-                                    merge patch.
-                                  items:
-                                    type: string
-                                  type: array
-                                  x-kubernetes-list-type: atomic
-                              required:
-                              - key
-                              - operator
-                              type: object
-                            type: array
-                            x-kubernetes-list-type: atomic
-                          matchLabels:
-                            additionalProperties:
-                              type: string
-                            description: |-
-                              matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                              map is equivalent to an element of matchExpressions, whose key field is "key", the
-                              operator is "In", and the values array contains only "value". The requirements are ANDed.
-                            type: object
-                        type: object
-                        x-kubernetes-map-type: atomic
-                      size:
-                        description: Size of the volume (e.g., "50Gi", "100Gi")
-                        type: string
-                      storageClassName:
-                        description: |-
-                          StorageClassName for the PVC
-                          If not specified, uses the cluster default storage class
-                        type: string
-                      volumeMode:
-                        description: |-
-                          VolumeMode defines whether the volume is a filesystem or block device
-                          Defaults to Filesystem if not specified
-                        type: string
-                    required:
-                    - size
-                    type: object
-                  type:
-                    allOf:
-                    - enum:
-                      - PersistentVolumeClaim
-                      - NFS
-                      - HostPath
-                    - enum:
-                      - PersistentVolumeClaim
-                      - NFS
-                      - HostPath
-                    description: Type indicates which storage backend to use
+                  size:
+                    default: 10Gi
+                    description: Size of the storage volume (e.g., "50Gi", "100Gi")
                     type: string
-                required:
-                - type
+                  storageClass:
+                    default: auto
+                    description: |-
+                      StorageClass specifies which Kubernetes StorageClass to use for the PVC
+                      Options:
+                        - "auto" (default): Auto-detect the best available StorageClass (prefers RWX, then default SC, then RWO)
+                        - "<storageclass-name>": Use a specific Kubernetes StorageClass by name (e.g., "longhorn", "nfs-client", "standard")
+                      The controller creates a PVC with the appropriate access mode (RWX or RWO) based on the StorageClass provisioner.
+                    type: string
                 type: object
             required:
-            - autoDownload
             - source
             - storage
             type: object
           status:
             description: ModelRepositoryStatus defines the observed state of ModelRepository
             properties:
-              boundNodeName:
+              availableRevisions:
                 description: |-
-                  BoundNodeName is the name of the node where the download job ran
-                  This is used for storage types that require node affinity (HostPath, ReadWriteOnce PVC)
-                  LLMEngine pods will be scheduled on this node to access the model files
-                type: string
+                  AvailableRevisions lists all downloaded and available revisions
+                  Only populated when spec.revision is specified
+                items:
+                  description: RevisionStatus describes a specific revision's state
+                  properties:
+                    commitHash:
+                      description: CommitHash is the immutable reference (git commit
+                        for HF)
+                      type: string
+                    name:
+                      description: Name is the user-friendly name
+                      type: string
+                    status:
+                      description: Status is the current status of this revision
+                      enum:
+                      - Pending
+                      - Downloading
+                      - Ready
+                      - Failed
+                      - Deprecated
+                      type: string
+                  required:
+                  - name
+                  - status
+                  type: object
+                type: array
               conditions:
                 description: Conditions represent the latest available observations
                   of the ModelRepository's state.
@@ -374,16 +274,60 @@ spec:
                   phase
                 type: string
               phase:
-                description: Phase represents the current phase of the model download
+                description: Phase represents the current phase of the model repository
                 enum:
-                - pending
-                - downloading
-                - downloaded
-                - failed
+                - Pending
+                - Downloading
+                - Ready
+                - Failed
+                - Deprecated
                 type: string
-              reason:
-                description: Reason provides the reason for the current phase
-                type: string
+              storage:
+                description: |-
+                  Storage contains detailed information about provisioned storage
+                  Only populated after storage is successfully provisioned
+                properties:
+                  accessMode:
+                    description: AccessMode is the volume access mode (ReadWriteMany,
+                      ReadWriteOnce)
+                    type: string
+                  backendRef:
+                    description: |-
+                      BackendRef contains backend-specific reference information
+                      This allows workloads in different namespaces to mount the same storage
+                    properties:
+                      details:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          Details contains backend-specific reference information as key-value pairs
+                          Common keys:
+                            For PVC: "pvcName", "pvcNamespace"
+                            For NFS: "server", "path"
+                            For HostPath: "path"
+                            For CephFS: "monitors", "path"
+                        type: object
+                      type:
+                        description: Type is the actual backend storage type detected
+                          from the PV (e.g., "nfs", "cephfs", "longhorn", "csi", "ebs")
+                        type: string
+                    type: object
+                  boundNodeName:
+                    description: BoundNodeName for node-bound storage (HostPath, RWO
+                      PVCs)
+                    type: string
+                  capacity:
+                    description: Capacity is the total storage capacity
+                    type: string
+                  storageClass:
+                    description: StorageClass is the actual storage class used (nfs,
+                      hostpath, custom name)
+                    type: string
+                  volumeMode:
+                    default: Filesystem
+                    description: VolumeMode is the volume mode (Filesystem, Block)
+                    type: string
+                type: object
             type: object
         type: object
     served: true

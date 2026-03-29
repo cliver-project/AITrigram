@@ -12,15 +12,13 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"
   storage:
-    type: HostPath
+    size: "10Gi"
+    storageClass: "hostpath"
     mountPath: /data/models
-    hostPath:
-      path: /mnt/models/test-hostpath
-      type: DirectoryOrCreate
   autoDownload: true
 
 ---
-# Optional: Pin to specific node
+# Optional: Pin to specific node using nodeSelector
 apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
@@ -30,10 +28,10 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"
   storage:
-    type: HostPath
+    size: "10Gi"
+    storageClass: "hostpath"
     mountPath: /data/models
-    hostPath:
-      path: /mnt/models/test-node-specific
-      type: DirectoryOrCreate
-      nodeName: kind-worker  # Adjust to your node name
+  # Use nodeSelector to pin to specific node
+  nodeSelector:
+    kubernetes.io/hostname: kind-worker  # Adjust to your node name
   autoDownload: true

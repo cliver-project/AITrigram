@@ -2,7 +2,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.20.1
   creationTimestamp: null
   name: llmengines.aitrigram.cliver-project.github.io
 spec:
@@ -52,178 +52,12 @@ spec:
             description: LLMEngineSpec defines the desired state of LLMEngine.
             properties:
               args:
-                description: Args specifies arguments to start the engine container.
+                description: |-
+                  Args specifies arguments to start the engine container.
+                  There will be some default arguments set based on engineType, this will override the defaults.
                 items:
                   type: string
                 type: array
-              cache:
-                description: Cache specifies the storage configuration for the k-v
-                  cache
-                properties:
-                  hostPath:
-                    description: |-
-                      HostPath storage configuration
-                      Required when Type is HostPath
-                    properties:
-                      nodeName:
-                        description: |-
-                          NodeName specifies which node to use for HostPath storage
-                          If not specified, the download job can run on any node, and the
-                          BoundNodeName will be set in status after the job completes
-                        type: string
-                      path:
-                        description: Path on the host node's filesystem
-                        type: string
-                      type:
-                        description: |-
-                          Type of HostPath volume
-                          DirectoryOrCreate creates the directory if it doesn't exist
-                          Directory requires the directory to exist
-                        enum:
-                        - DirectoryOrCreate
-                        - Directory
-                        - File
-                        - Socket
-                        - CharDevice
-                        - BlockDevice
-                        type: string
-                    required:
-                    - path
-                    type: object
-                  mountPath:
-                    description: |-
-                      MountPath is the path where models will be stored/mounted inside containers
-                      Defaults to /data/models if not specified
-                    type: string
-                  nfs:
-                    description: |-
-                      NFS storage configuration
-                      Required when Type is NFS
-                    properties:
-                      path:
-                        description: Path exported by the NFS server
-                        type: string
-                      readOnly:
-                        description: |-
-                          ReadOnly mounts the NFS volume as read-only
-                          Note: Download jobs require write access, so this should typically be false
-                        type: boolean
-                      server:
-                        description: Server is the hostname or IP address of the NFS
-                          server
-                        type: string
-                    required:
-                    - path
-                    - server
-                    type: object
-                  persistentVolumeClaim:
-                    description: |-
-                      PersistentVolumeClaim storage configuration
-                      Required when Type is PersistentVolumeClaim
-                      if existingClaim is specified, a new PVC will not be created, and the operator will try to search it within the same namespace as the ModelRepository CR, typically it is 'aitrigram-system'.
-                      otherwise, a new PVC will be created in the same namespace as the ModelRepository CR.
-                    properties:
-                      accessMode:
-                        default: ReadWriteMany
-                        description: |-
-                          AccessMode for the PVC
-                          ReadWriteMany (RWX) allows multiple nodes to mount the volume
-                          ReadWriteOnce (RWO) binds to a single node
-                        enum:
-                        - ReadWriteMany
-                        - ReadWriteOnce
-                        type: string
-                      existingClaim:
-                        description: |-
-                          ExistingClaim references an existing PVC instead of creating a new one
-                          When specified, Size, StorageClassName, and AccessMode are ignored
-                        type: string
-                      retainPolicy:
-                        description: |-
-                          RetainPolicy determines what happens to the PVC when ModelRepository is deleted
-                          "Delete" removes the PVC (default for newly created PVCs)
-                          "Retain" keeps the PVC (default for existingClaim)
-                        enum:
-                        - Delete
-                        - Retain
-                        type: string
-                      selector:
-                        description: Selector is used to find matching PersistentVolumes
-                        properties:
-                          matchExpressions:
-                            description: matchExpressions is a list of label selector
-                              requirements. The requirements are ANDed.
-                            items:
-                              description: |-
-                                A label selector requirement is a selector that contains values, a key, and an operator that
-                                relates the key and values.
-                              properties:
-                                key:
-                                  description: key is the label key that the selector
-                                    applies to.
-                                  type: string
-                                operator:
-                                  description: |-
-                                    operator represents a key's relationship to a set of values.
-                                    Valid operators are In, NotIn, Exists and DoesNotExist.
-                                  type: string
-                                values:
-                                  description: |-
-                                    values is an array of string values. If the operator is In or NotIn,
-                                    the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                    the values array must be empty. This array is replaced during a strategic
-                                    merge patch.
-                                  items:
-                                    type: string
-                                  type: array
-                                  x-kubernetes-list-type: atomic
-                              required:
-                              - key
-                              - operator
-                              type: object
-                            type: array
-                            x-kubernetes-list-type: atomic
-                          matchLabels:
-                            additionalProperties:
-                              type: string
-                            description: |-
-                              matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                              map is equivalent to an element of matchExpressions, whose key field is "key", the
-                              operator is "In", and the values array contains only "value". The requirements are ANDed.
-                            type: object
-                        type: object
-                        x-kubernetes-map-type: atomic
-                      size:
-                        description: Size of the volume (e.g., "50Gi", "100Gi")
-                        type: string
-                      storageClassName:
-                        description: |-
-                          StorageClassName for the PVC
-                          If not specified, uses the cluster default storage class
-                        type: string
-                      volumeMode:
-                        description: |-
-                          VolumeMode defines whether the volume is a filesystem or block device
-                          Defaults to Filesystem if not specified
-                        type: string
-                    required:
-                    - size
-                    type: object
-                  type:
-                    allOf:
-                    - enum:
-                      - PersistentVolumeClaim
-                      - NFS
-                      - HostPath
-                    - enum:
-                      - PersistentVolumeClaim
-                      - NFS
-                      - HostPath
-                    description: Type indicates which storage backend to use
-                    type: string
-                required:
-                - type
-                type: object
               engineType:
                 default: vllm
                 description: EngineType specifies the type of LLM engine (e.g., ollama,
@@ -233,13 +67,17 @@ spec:
                 - vllm
                 type: string
               env:
-                description: Env specifies environment variables for the engine container.
+                description: |-
+                  Env specifies environment variables for the engine container.
+                  There will be some default environment variables set based on engineType, which will be merged with these. This takes precedence.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
                   properties:
                     name:
-                      description: Name of the environment variable. Must be a C_IDENTIFIER.
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
                       type: string
                     value:
                       description: |-
@@ -295,6 +133,43 @@ spec:
                               type: string
                           required:
                           - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
                           type: object
                           x-kubernetes-map-type: atomic
                         resourceFieldRef:
@@ -363,7 +238,7 @@ spec:
                     minimum: 1
                     type: integer
                   enabled:
-                    default: false
+                    default: true
                     description: |-
                       Enabled indicates whether GPU support is enabled
                       When enabled, the deployment will request GPU resources and target GPU nodes
@@ -398,9 +273,10 @@ spec:
                         operator:
                           description: |-
                             Operator represents a key's relationship to the value.
-                            Valid operators are Exists and Equal. Defaults to Equal.
+                            Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
                             Exists is equivalent to wildcard for value, so that a pod can
                             tolerate all taints of a particular category.
+                            Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                           type: string
                         tolerationSeconds:
                           description: |-
@@ -438,10 +314,32 @@ spec:
                 type: string
               modelRefs:
                 description: |-
-                  ModelRefs lists the ModelRepository names that this engine will serve
-                  The engine will automatically mount storage from these ModelRepositories
+                  ModelRefs lists the ModelRepositories that this engine will serve
+                  Each reference can specify a specific revision
+                  For each ModelRef, a separate Deployment will be created
                 items:
-                  type: string
+                  description: ModelReference references a ModelRepository with optional
+                    revision
+                  properties:
+                    name:
+                      description: Name of the ModelRepository
+                      type: string
+                    revision:
+                      description: |-
+                        Revision specifies which revision to use
+                        If not specified, uses the ModelRepository's current revision
+                        Can be a revision name, tag, or commit hash
+                      type: string
+                    updatePolicy:
+                      default: Manual
+                      description: UpdatePolicy defines how to handle revision updates
+                      enum:
+                      - Manual
+                      - Automatic
+                      type: string
+                  required:
+                  - name
+                  type: object
                 minItems: 1
                 type: array
               nodeSelector:

@@ -7,33 +7,74 @@ spec:
   # If not specified, defaults to metadata.name (llama3-7b in this example)
   # Uncomment below to override the default:
   # modelName: llama3-model-name-in-repository
+
   source:
-    origin: huggingface   # can be others: huggingface | gguf | local | ollama
-    modelId: meta-llama/llama3-7b    # this is the identifier of the model within the origin, so that it knows how to download it
-    hfTokenSecretRef:   # this is specific to huggingface, other type may have their own way to access the model to download
-      name: huggingface-token
-      key: token
+    origin: huggingface   # Options: huggingface | ollama
+    modelId: meta-llama/Llama-3.2-3B-Instruct    # Model identifier for the origin
+    # For HuggingFace gated models, provide a token secret:
+    # The secret should exist in the controller's namespace
+    hfTokenSecret: huggingface-token      # Name of the secret
+    hfTokenSecretKey: token                # Key in the secret (defaults to "HFToken" if not specified)
+
+  # SIMPLIFIED STORAGE CONFIGURATION
+  # The operator will auto-detect and provision the best available storage
   storage:
-    path: /models
-    # REQUIRED: Use a shareable storage type that persists across pods
-    # Recommended: PersistentVolumeClaim (for production)
-    persistentVolumeClaim:
-      claimName: vllm-shared-models
+    # REQUIRED: Storage size
+    size: "50Gi"
 
-    # Alternative shareable storage types (uncomment one):
-    # HostPath (for development/testing on single node)
-    # hostPath:
-    #   path: /data/models
-    #   type: DirectoryOrCreate
+    # OPTIONAL: Mount path (defaults to /data/models if not specified)
+    mountPath: /data/models
 
-    # NFS (for multi-node clusters)
-    # nfs:
-    #   server: nfs-server.example.com
-    #   path: /exports/models
+    # OPTIONAL: Storage class selection (defaults to "auto" if not specified)
+    # - "auto": Operator auto-detects best available storage class
+    #   Priority: ReadWriteMany shared storage → Default SC → ReadWriteOnce → HostPath fallback
+    # - "<storage-class-name>": Use a specific storage class (e.g., "nfs-client", "longhorn")
+    # - "hostpath": Force HostPath storage (development only, single-node)
+    storageClass: "auto"
 
-    # Note: emptyDir, configMap, secret, downwardAPI, and projected volumes
-    # are NOT allowed as they cannot be shared between download job and LLMEngine pods
+    # Examples of storageClass values:
+    # storageClass: "nfs-client"      # Use NFS storage class
+    # storageClass: "longhorn"        # Use Longhorn storage class
+    # storageClass: "hostpath"        # Force HostPath (development only)
+    # storageClass: "auto"            # Let operator choose (default)
+
+  # Auto-download models on creation
   autoDownload: true
+
+  # Optional: Node selector for download job placement
+  # Useful for directing downloads to specific nodes with fast storage
+  # nodeSelector:
+  #   storage: "fast"
+  #   zone: "us-west1-a"
+
+  # Optional: Revision management for tracking multiple model versions
+  # If not specified, operates in single-revision mode (legacy behavior - downloads to default path)
+  # When spec.source.origin is HuggingFace, the default revision is the model's default branch (usually "main")
+  # Uncomment to enable explicit multi-revision tracking:
+  # revision:
+  #   # Current active revision - this is the git ref from the source repository
+  #   # For HuggingFace: can be branch name, tag, or commit hash (defaults to "main")
+  #   current: "main"
+  #
+  #   # Update strategy: Manual (default) or Automatic
+  #   updateStrategy: Manual
+  #
+  #   # Auto-promote new downloads to current (default: false)
+  #   autoPromote: false
+  #
+  #   # Track multiple revisions (each downloads to separate directory)
+  #   revisions:
+  #     - name: "main"           # User-friendly name
+  #       ref: "main"            # Git ref from source repo (branch/tag/commit)
+  #       promoted: true         # Available for LLMEngine use
+  #       autoUpdate: true       # Auto-download new commits
+  #       retainAfterSuperseded: true  # Keep for rollback
+  #
+  # # Optional: Revision history retention policies
+  # revisionHistory:
+  #   limit: 3           # Max revisions to keep (default: 3)
+  #   retainDays: 30     # Delete unused revisions after N days (default: 30)
+
   # Optional: Specify custom download image (defaults based on origin)
   # downloadImage: python:3.11-slim
 
@@ -75,8 +116,6 @@ spec:
   # If not specified, default delete scripts will be used based on origin:
   #   - huggingface: removes model directory
   #   - ollama: runs "ollama rm {{ ModelId }}" then removes directory
-  #   - gguf: removes model directory
-  #   - local: skips deletion (logs only)
 
   # Example: Custom delete script for Ollama
   # deleteScripts: |

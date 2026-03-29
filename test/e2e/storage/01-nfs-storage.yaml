@@ -12,10 +12,7 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"  # Small test model
   storage:
-    type: NFS
+    size: "10Gi"
+    storageClass: "nfs-client"  # Adjust to your NFS storage class name
     mountPath: /data/models
-    nfs:
-      server: nfs-server.default.svc.cluster.local  # Adjust to your NFS server
-      path: /exports/models
-      readOnly: false
   autoDownload: true

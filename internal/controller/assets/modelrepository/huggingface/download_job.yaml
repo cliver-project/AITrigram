@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: placeholder
+  namespace: placeholder
+  labels:
+    app: llm-downloader
+    modelrepository.aitrigram.cliver-project.github.io/name: placeholder
+    app.kubernetes.io/managed-by: modelrepository-controller
+spec:
+  template:
+    metadata:
+      labels:
+        app: llm-downloader
+        modelrepository.aitrigram.cliver-project.github.io/name: placeholder
+        app.kubernetes.io/managed-by: modelrepository-controller
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: worker
+        image: python:3.11-slim
+        command:
+        - python3
+        args: []  # Will be populated by adapter with script content
+        env:
+        - name: HF_HOME
+          value: /data/models
+        - name: TRANSFORMERS_CACHE
+          value: /data/models
+        - name: HUGGINGFACE_HUB_CACHE
+          value: /data/models/hub
+        volumeMounts: []  # Will be populated by adapter
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 500m
+          limits:
+            memory: 4Gi
+            cpu: 2000m
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+      volumes: []  # Will be populated by adapter
+      nodeSelector: {}  # Will be populated by adapter

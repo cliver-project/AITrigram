@@ -189,24 +189,21 @@ metadata:
           "spec": {
             "autoDownload": true,
             "source": {
-              "hfTokenSecretRef": {
-                "key": "token",
-                "name": "huggingface-token"
-              },
-              "modelId": "meta-llama/llama3-7b",
+              "hfTokenSecret": "huggingface-token",
+              "hfTokenSecretKey": "token",
+              "modelId": "meta-llama/Llama-3.2-3B-Instruct",
               "origin": "huggingface"
             },
             "storage": {
-              "path": "/models",
-              "persistentVolumeClaim": {
-                "claimName": "vllm-shared-models"
-              }
+              "mountPath": "/data/models",
+              "size": "50Gi",
+              "storageClass": "auto"
             }
           }
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-11-13T15:12:10Z"
+    createdAt: "2026-03-29T14:17:51Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -238,6 +235,20 @@ spec:
         - apiGroups:
           - ""
           resources:
+          - configmaps
+          - persistentvolumeclaims
+          - services
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
           - events
           verbs:
           - create
@@ -251,19 +262,6 @@ spec:
           verbs:
           - get
           - list
-          - watch
-        - apiGroups:
-          - ""
-          resources:
-          - persistentvolumeclaims
-          - services
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
           - watch
         - apiGroups:
           - aitrigram.cliver-project.github.io

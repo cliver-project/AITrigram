@@ -4,7 +4,9 @@ set -euo pipefail
 # Environment variables:
 #   - OLLAMA_HOME: Directory to store models (set by operator)
 #   - OLLAMA_MODELS: Directory to store models (set by operator)
-#   - MODEL_ID: Ollama model name (e.g., "llama2:7b")
+#   - MODEL_ID: Ollama model name (e.g., "llama3.2")
+#   - REVISION_ID: Optional revision/tag (e.g., "3b", "latest")
+#                  If provided, will be used to compose final model like "llama3.2:3b"
 
 echo "========================================"
 echo "Ollama Model Download Script"
@@ -18,7 +20,16 @@ fi
 OLLAMA_HOME=${OLLAMA_HOME:-/data/models}
 export OLLAMA_MODELS="$OLLAMA_HOME"
 
-echo "Model ID: $MODEL_ID"
+# Compose full model identifier with revision tag if provided
+if [ -n "${REVISION_ID:-}" ]; then
+    FULL_MODEL_ID="${MODEL_ID}:${REVISION_ID}"
+else
+    FULL_MODEL_ID="${MODEL_ID}"
+fi
+
+echo "Base Model ID: $MODEL_ID"
+echo "Revision: ${REVISION_ID:-<default>}"
+echo "Full Model ID: $FULL_MODEL_ID"
 echo "Target directory: $OLLAMA_HOME"
 echo "----------------------------------------"
 
@@ -49,12 +60,12 @@ done
 rm -f "$OLLAMA_LOG"
 
 # Pull the model
-echo "Downloading model: $MODEL_ID"
-if ollama pull "$MODEL_ID"; then
-    echo "Successfully downloaded $MODEL_ID"
+echo "Downloading model: $FULL_MODEL_ID"
+if ollama pull "$FULL_MODEL_ID"; then
+    echo "Successfully downloaded $FULL_MODEL_ID"
     EXIT_CODE=0
 else
-    echo "ERROR: Failed to download $MODEL_ID" >&2
+    echo "ERROR: Failed to download $FULL_MODEL_ID" >&2
     EXIT_CODE=1
 fi
 

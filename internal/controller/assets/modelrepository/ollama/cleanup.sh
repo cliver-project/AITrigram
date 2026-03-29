@@ -4,7 +4,9 @@ set -euo pipefail
 # Environment variables:
 #   - OLLAMA_HOME: Directory where models are stored (set by operator)
 #   - OLLAMA_MODELS: Directory where models are stored (set by operator)
-#   - MODEL_ID: Ollama model name (e.g., "llama2:7b")
+#   - MODEL_ID: Ollama model name (e.g., "llama3.2")
+#   - REVISION_ID: Optional revision/tag (e.g., "3b", "latest")
+#                  If provided, will be used to compose final model like "llama3.2:3b"
 
 echo "========================================"
 echo "Ollama Model Cleanup Script"
@@ -18,7 +20,16 @@ fi
 OLLAMA_HOME=${OLLAMA_HOME:-/data/models}
 export OLLAMA_MODELS="$OLLAMA_HOME"
 
-echo "Model ID: $MODEL_ID"
+# Compose full model identifier with revision tag if provided
+if [ -n "${REVISION_ID:-}" ]; then
+    FULL_MODEL_ID="${MODEL_ID}:${REVISION_ID}"
+else
+    FULL_MODEL_ID="${MODEL_ID}"
+fi
+
+echo "Base Model ID: $MODEL_ID"
+echo "Revision: ${REVISION_ID:-<default>}"
+echo "Full Model ID: $FULL_MODEL_ID"
 echo "Model directory: $OLLAMA_HOME"
 echo "----------------------------------------"
 
@@ -49,15 +60,15 @@ for i in {1..30}; do
 done
 
 # Try to remove the model using ollama
-echo "Removing model: $MODEL_ID"
-if ollama rm "$MODEL_ID" 2>/dev/null; then
-    echo "Successfully removed $MODEL_ID"
+echo "Removing model: $FULL_MODEL_ID"
+if ollama rm "$FULL_MODEL_ID" 2>/dev/null; then
+    echo "Successfully removed $FULL_MODEL_ID"
 elif [ -d "$OLLAMA_HOME/manifests" ]; then
     # If ollama rm fails, try to clean up manually
     echo "WARNING: ollama rm failed, attempting manual cleanup"
 
-    # Remove model manifests
-    find "$OLLAMA_HOME/manifests" -type f -name "*${MODEL_ID}*" -delete 2>/dev/null || true
+    # Remove model manifests - search for the full model ID pattern
+    find "$OLLAMA_HOME/manifests" -type f -name "*${FULL_MODEL_ID}*" -delete 2>/dev/null || true
 
     # Note: We don't remove blobs as they might be shared by other models
     echo "Manual cleanup completed (kept shared blobs)"

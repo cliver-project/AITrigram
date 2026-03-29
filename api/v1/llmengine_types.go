@@ -33,11 +33,42 @@ const (
 	LLMEngineTypeVLLM LLMEngineType = "vllm"
 )
 
+// RevisionUpdatePolicy defines how LLMEngine handles model updates
+// +kubebuilder:validation:Enum=Manual;Automatic
+type RevisionUpdatePolicy string
+
+const (
+	// RevisionUpdatePolicyManual requires pod restart to use new revision
+	RevisionUpdatePolicyManual RevisionUpdatePolicy = "Manual"
+
+	// RevisionUpdatePolicyAutomatic restarts pods when revision changes
+	// Use with caution - may cause service interruption
+	RevisionUpdatePolicyAutomatic RevisionUpdatePolicy = "Automatic"
+)
+
+// ModelReference references a ModelRepository with optional revision
+type ModelReference struct {
+	// Name of the ModelRepository
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Revision specifies which revision to use
+	// If not specified, uses the ModelRepository's current revision
+	// Can be a revision name, tag, or commit hash
+	// +optional
+	Revision string `json:"revision,omitempty"`
+
+	// UpdatePolicy defines how to handle revision updates
+	// +optional
+	// +kubebuilder:default="Manual"
+	UpdatePolicy RevisionUpdatePolicy `json:"updatePolicy,omitempty"`
+}
+
 // GPUConfig defines GPU resource configuration for LLMEngine
 type GPUConfig struct {
 	// Enabled indicates whether GPU support is enabled
 	// When enabled, the deployment will request GPU resources and target GPU nodes
-	// +kubebuilder:default:=false
+	// +kubebuilder:default:=true
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
@@ -72,11 +103,12 @@ type LLMEngineSpec struct {
 	// +kubebuilder:default:=vllm
 	EngineType LLMEngineType `json:"engineType"`
 
-	// ModelRefs lists the ModelRepository names that this engine will serve
-	// The engine will automatically mount storage from these ModelRepositories
+	// ModelRefs lists the ModelRepositories that this engine will serve
+	// Each reference can specify a specific revision
+	// For each ModelRef, a separate Deployment will be created
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
-	ModelRefs []string `json:"modelRefs"`
+	ModelRefs []ModelReference `json:"modelRefs"`
 
 	// Image specifies the container image to use for the engine.
 	// If not specified, a default image will be selected based on engineType
@@ -84,10 +116,12 @@ type LLMEngineSpec struct {
 	Image string `json:"image,omitempty"`
 
 	// Args specifies arguments to start the engine container.
+	// There will be some default arguments set based on engineType, this will override the defaults.
 	// +optional
 	Args []string `json:"args,omitempty"`
 
 	// Env specifies environment variables for the engine container.
+	// There will be some default environment variables set based on engineType, which will be merged with these. This takes precedence.
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
@@ -102,10 +136,6 @@ type LLMEngineSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	ServicePort int32 `json:"servicePort,omitempty"`
-
-	// Cache specifies the storage configuration for the k-v cache
-	// +optional
-	Cache *ModelStorage `json:"cache,omitempty"`
 
 	// Replicas specifies the number of pod replicas for each model deployment
 	// Each ModelRef will get its own Deployment with this many replicas

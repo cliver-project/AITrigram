@@ -28,10 +28,7 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"
   storage:
-    type: PersistentVolumeClaim
+    size: "10Gi"
+    storageClass: "nfs-client"  # Uses same storage class as the pre-created PVC
     mountPath: /data/models
-    persistentVolumeClaim:
-      existingClaim: my-existing-model-pvc
-      size: "10Gi"  # Must match existing PVC size
-      accessMode: ReadWriteMany
   autoDownload: true

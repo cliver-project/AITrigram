@@ -12,10 +12,7 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"
   storage:
-    type: PersistentVolumeClaim
+    size: "10Gi"
+    storageClass: "standard"  # Adjust to your RWO storage class
     mountPath: /data/models
-    persistentVolumeClaim:
-      size: "10Gi"
-      accessMode: ReadWriteOnce
-      storageClassName: "standard"  # Adjust to your RWO storage class
   autoDownload: true

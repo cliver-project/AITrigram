@@ -90,7 +90,7 @@ def main():
         sys.exit(1)
 
     hf_home = os.environ.get('HF_HOME', '/data/models')
-    revision = os.environ.get('REVISION', 'main')
+    revision = os.environ.get('REVISION_ID', 'main')
 
     print(f"Cleaning up model: {model_id} (revision: {revision})")
     print(f"Cache directory: {hf_home}")

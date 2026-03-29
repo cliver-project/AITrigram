@@ -12,10 +12,7 @@ spec:
     origin: huggingface
     modelId: "hf-internal-testing/tiny-random-gpt2"
   storage:
-    type: PersistentVolumeClaim
+    size: "10Gi"
+    storageClass: "nfs-client"  # Adjust to your RWX storage class
     mountPath: /data/models
-    persistentVolumeClaim:
-      size: "10Gi"
-      accessMode: ReadWriteMany
-      storageClassName: "nfs-client"  # Adjust to your RWX storage class
   autoDownload: true

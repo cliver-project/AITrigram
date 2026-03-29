@@ -1,0 +1,42 @@
+---
+# E2E Test: Full inference test with HuggingFace + HostPath storage
+# This tests:
+# 1. ModelRepository deployment with HostPath
+# 2. LLMEngine deployment with vLLM
+# 3. Inference requests
+
+# ModelRepository for a tiny HuggingFace model
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: ModelRepository
+metadata:
+  name: hf-hostpath-inference-test
+spec:
+  source:
+    origin: huggingface
+    # Using a tiny test model (~20MB) for fast testing
+    modelId: hf-internal-testing/tiny-random-gpt2
+
+  storage:
+    size: "10Gi"
+    storageClass: "hostpath"
+    mountPath: /data/models
+
+  autoDownload: true
+
+---
+# LLMEngine for HuggingFace with vLLM
+apiVersion: aitrigram.cliver-project.github.io/v1
+kind: LLMEngine
+metadata:
+  name: hf-hostpath-inference-test
+  namespace: aitrigram-system
+spec:
+  engineType: vllm
+  modelRefs:
+    - name: hf-hostpath-inference-test
+  replicas: 1
+  servicePort: 8000
+  # Minimal vLLM args for tiny model
+  args:
+    - --max-model-len=256
+    - --gpu-memory-utilization=0.5
