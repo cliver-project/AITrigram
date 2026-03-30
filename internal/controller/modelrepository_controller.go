@@ -278,7 +278,6 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 					return ctrl.Result{}, err
 				}
 
-
 			} else if job.Status.Failed > 0 {
 				// Job failed - this is an error condition
 				logger.Error(fmt.Errorf("revision download job failed"), "Job has failed", "revision", revRef.Name, "job", jobName)

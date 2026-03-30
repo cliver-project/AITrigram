@@ -104,21 +104,18 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
 		}
 
-		// For storage that requires node affinity, ensure BoundNodeName is set
+		// For RWO storage, log node binding info if available
 		if storage.RequiresNodeAffinity(modelRepo) {
-			boundNode := ""
-			if modelRepo.Status.Storage != nil {
-				boundNode = modelRepo.Status.Storage.BoundNodeName
+			boundNode := storage.GetBoundNodeName(modelRepo)
+			if boundNode != "" {
+				logger.Info("ModelRepository is bound to node",
+					"modelRepo", modelRepo.Name,
+					"boundNode", boundNode)
+			} else {
+				// PV may not have node affinity (e.g., minikube) — proceed without it
+				logger.Info("RWO storage has no boundNodeName, proceeding without node affinity",
+					"modelRepo", modelRepo.Name)
 			}
-			if boundNode == "" {
-				msg := fmt.Sprintf("Waiting for ModelRepository %s to bind to a node (storage type: %s requires node affinity)",
-					modelRepo.Name, storage.GetStorageType(modelRepo))
-				return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForNodeBinding", msg)
-			}
-			logger.Info("ModelRepository is bound to node",
-				"modelRepo", modelRepo.Name,
-				"boundNode", boundNode,
-				"storageType", storage.GetStorageType(modelRepo))
 		}
 	}
 
@@ -146,14 +143,6 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	totalDeployments := len(modelRepos)
 
 	for _, modelRepo := range modelRepos {
-		// Double-check prerequisites before creating deployment
-		// This ensures we don't create a deployment that will fail to schedule
-		if storage.RequiresNodeAffinity(modelRepo) && storage.GetBoundNodeName(modelRepo) == "" {
-			msg := fmt.Sprintf("Cannot create deployment: ModelRepository %s not yet bound to a node (storage: %s)",
-				modelRepo.Name, storage.GetStorageType(modelRepo))
-			logger.Info(msg, "modelRepo", modelRepo.Name)
-			return r.updateStatus(ctx, llmEngine, "Pending", "NodeBindingRequired", msg)
-		}
 
 		// Create component for this model
 		// ConfigMap (if needed) will be created by the component's manifest adapters
@@ -398,7 +387,7 @@ func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitri
 
 	// Requeue if pending
 	if phase == "Pending" {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	return ctrl.Result{}, nil
