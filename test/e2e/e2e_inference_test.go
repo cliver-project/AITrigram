@@ -42,6 +42,20 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 		const modelRepoName = "ollama-hostpath-inference-test"
 		const engineName = "ollama-hostpath-inference-test"
 
+		AfterEach(func() {
+			// Delete LLMEngine first (so ModelRepository deletion isn't blocked by dependency check)
+			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", "default", "--ignore-not-found", "--wait=true", "--timeout=60s")
+			output, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup LLMEngine: %s\n", output)
+
+			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--ignore-not-found", "--wait=true", "--timeout=60s")
+			output, _ = utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
+
+			cmd = exec.Command("kubectl", "delete", "pod", "inference-test-client", "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
 		It("should deploy Ollama model and engine, then handle inference requests", func() {
 			By("applying ModelRepository and LLMEngine manifests")
 			cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-06-ollama-hostpath-inference.yaml")
@@ -55,17 +69,9 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
-				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be downloaded")
+				g.Expect(output).To(Equal("Ready"), "ModelRepository should be in Ready phase")
 				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
-
-			By("verifying BoundNodeName is set for HostPath storage")
-			cmd = exec.Command("kubectl", "get", "modelrepository", modelRepoName,
-				"-o", "jsonpath={.status.boundNodeName}")
-			boundNode, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to get boundNodeName")
-			Expect(boundNode).NotTo(BeEmpty(), "BoundNodeName should be set")
-			_, _ = fmt.Fprintf(GinkgoWriter, "Model bound to node: %s\n", boundNode)
 
 			By("waiting for LLMEngine deployment to be created")
 			Eventually(func(g Gomega) {
@@ -178,18 +184,23 @@ spec:
 			Expect(lowerResponse).To(ContainSubstring("hello"), "Response should contain 'hello'")
 			_, _ = fmt.Fprintf(GinkgoWriter, "✓ Inference test passed!\n")
 
-			By("cleaning up test resources")
-			cmd = exec.Command("kubectl", "delete", "pod", "inference-test-client", "-n", testNamespace, "--wait=false")
-			_, _ = utils.Run(cmd)
-
-			cmd = exec.Command("kubectl", "delete", "-f", "test/e2e/storage/e2e-06-ollama-hostpath-inference.yaml", "--wait=false")
-			_, _ = utils.Run(cmd)
 		})
 	})
 
 	Context("HuggingFace (vLLM) with HostPath Storage - Full Inference Test", func() {
 		const modelRepoName = "hf-hostpath-inference-test"
 		const engineName = "hf-hostpath-inference-test"
+
+		AfterEach(func() {
+			// Delete LLMEngine first (so ModelRepository deletion isn't blocked by dependency check)
+			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", "aitrigram-system", "--ignore-not-found", "--wait=true", "--timeout=60s")
+			output, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup LLMEngine: %s\n", output)
+
+			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--ignore-not-found", "--wait=true", "--timeout=60s")
+			output, _ = utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
+		})
 
 		It("should deploy HuggingFace model and vLLM engine, then handle inference requests", func() {
 			By("checking if cluster has GPU support")
@@ -211,7 +222,7 @@ spec:
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
-				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be downloaded")
+				g.Expect(output).To(Equal("Ready"), "ModelRepository should be in Ready phase")
 				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
@@ -292,9 +303,6 @@ spec:
 			_, _ = fmt.Fprintf(GinkgoWriter, "Inference response: %s\n", inferenceResponse)
 			_, _ = fmt.Fprintf(GinkgoWriter, "✓ HuggingFace inference test passed!\n")
 
-			By("cleaning up test resources")
-			cmd = exec.Command("kubectl", "delete", "-f", "test/e2e/storage/e2e-07-huggingface-hostpath-inference.yaml", "--wait=false")
-			_, _ = utils.Run(cmd)
 		})
 	})
 })

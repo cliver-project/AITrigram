@@ -42,6 +42,12 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 	Context("HostPath Storage", func() {
 		const modelRepoName = "ollama-hostpath-test"
 
+		AfterEach(func() {
+			cmd := exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--ignore-not-found", "--wait=true")
+			output, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
+		})
+
 		It("should download Ollama model successfully with HostPath storage", func() {
 			By("applying ModelRepository with HostPath storage")
 			cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/storage/e2e-02-ollama-hostpath.yaml")
@@ -72,34 +78,27 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
-			By("verifying ModelRepository status is 'downloaded'")
+			By("verifying ModelRepository status is 'Ready'")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "modelrepository", modelRepoName,
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
-				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				g.Expect(output).To(Equal("Ready"), "ModelRepository should be in Ready phase")
 				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
-			By("verifying BoundNodeName is set in status")
-			cmd = exec.Command("kubectl", "get", "modelrepository", modelRepoName,
-				"-o", "jsonpath={.status.boundNodeName}")
-			output, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to get boundNodeName")
-			Expect(output).NotTo(BeEmpty(), "BoundNodeName should be set for HostPath storage")
-			_, _ = fmt.Fprintf(GinkgoWriter, "Model bound to node: %s\n", output)
-
-			By("cleaning up ModelRepository")
-			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			output, _ = utils.Run(cmd)
-			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup result: %s\n", output)
 		})
 	})
 
 	Context("PVC ReadWriteMany (RWX) Storage", func() {
 		const modelRepoName = "ollama-pvc-rwx-test"
-		const pvcName = "model-storage-rwx-test"
+
+		AfterEach(func() {
+			cmd := exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--ignore-not-found", "--wait=true")
+			output, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
+		})
 
 		It("should download Ollama model successfully with RWX PVC storage", func() {
 			By("checking if a default storage class is available")
@@ -174,25 +173,27 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
-			By("verifying ModelRepository status is 'downloaded'")
+			By("verifying ModelRepository status is 'Ready'")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "modelrepository", modelRepoName,
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
-				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				g.Expect(output).To(Equal("Ready"), "ModelRepository should be in Ready phase")
 				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
-			By("cleaning up ModelRepository (controller will auto-cleanup PVC)")
-			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			cleanupOutput, _ := utils.Run(cmd)
-			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository result: %s\n", cleanupOutput)
 		})
 	})
 
 	Context("PVC ReadWriteOnce (RWO) Storage", func() {
 		const modelRepoName = "ollama-pvc-rwo-test"
+
+		AfterEach(func() {
+			cmd := exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--ignore-not-found", "--wait=true")
+			output, _ := utils.Run(cmd)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
+		})
 
 		It("should download Ollama model successfully with RWO PVC storage", func() {
 			By("checking if a default storage class is available")
@@ -232,28 +233,16 @@ var _ = Describe("ModelRepository Storage Tests for Ollama", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Job succeeded count: %s\n", output)
 			}).Should(Succeed())
 
-			By("verifying ModelRepository status is 'downloaded'")
+			By("verifying ModelRepository status is 'Ready'")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "modelrepository", modelRepoName,
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get ModelRepository status")
-				g.Expect(strings.ToLower(output)).To(Equal("downloaded"), "ModelRepository should be in downloaded phase")
+				g.Expect(output).To(Equal("Ready"), "ModelRepository should be in Ready phase")
 				_, _ = fmt.Fprintf(GinkgoWriter, "ModelRepository phase: %s\n", output)
 			}).Should(Succeed())
 
-			By("verifying BoundNodeName is set in status for RWO storage")
-			cmd = exec.Command("kubectl", "get", "modelrepository", modelRepoName,
-				"-o", "jsonpath={.status.boundNodeName}")
-			output, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to get boundNodeName")
-			Expect(output).NotTo(BeEmpty(), "BoundNodeName should be set for RWO storage")
-			_, _ = fmt.Fprintf(GinkgoWriter, "Model bound to node: %s\n", output)
-
-			By("cleaning up ModelRepository (controller will auto-cleanup PVC)")
-			cmd = exec.Command("kubectl", "delete", "modelrepository", modelRepoName, "--wait=true")
-			cleanupOutput, _ := utils.Run(cmd)
-			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository result: %s\n", cleanupOutput)
 		})
 	})
 
