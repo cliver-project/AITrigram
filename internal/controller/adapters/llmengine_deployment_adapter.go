@@ -114,6 +114,11 @@ func AdaptDeployment(ctx component.LLMEngineContext, deployment *appsv1.Deployme
 		}
 	}
 
+	// Override resources from spec (takes precedence over template defaults)
+	if llmEngine.Spec.Resources != nil {
+		container.Resources = MergeResourceRequirements(container.Resources, *llmEngine.Spec.Resources)
+	}
+
 	// Set resources and security context based on GPU/CPU
 	if requestGPU {
 		// Merge GPU resources with template's CPU/memory resources

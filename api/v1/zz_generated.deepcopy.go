@@ -170,6 +170,11 @@ func (in *LLMEngineSpec) DeepCopyInto(out *LLMEngineSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Resources != nil {
+		in, out := &in.Resources, &out.Resources
+		*out = new(corev1.ResourceRequirements)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.GPU != nil {
 		in, out := &in.GPU, &out.GPU
 		*out = new(GPUConfig)

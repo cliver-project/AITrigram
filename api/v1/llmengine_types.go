@@ -152,6 +152,11 @@ type LLMEngineSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// Resources specifies CPU and memory resource requirements for the engine container
+	// Overrides the default resource requests/limits from the engine template
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
 	// GPU specifies GPU resource configuration
 	// When GPU is enabled, pods will request GPU resources and be scheduled on GPU nodes
 	// If GPU nodes are not available or lack sufficient resources, deployment will fail
