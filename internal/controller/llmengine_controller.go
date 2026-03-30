@@ -61,6 +61,8 @@ type LLMEngineReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
@@ -138,6 +140,18 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
+	// Prepare read-only storage for each ModelRepository
+	// Creates a PV+PVC in the LLMEngine's namespace mirroring the ModelRepository's backend
+	storageResults := map[string]*storage.LLMEngineStorageResult{}
+	for _, modelRepo := range modelRepos {
+		result, err := storage.EnsureLLMEngineStorage(ctx, r.Client, llmEngine, modelRepo)
+		if err != nil {
+			return r.updateStatus(ctx, llmEngine, "Pending", "StoragePending",
+				fmt.Sprintf("Preparing storage for model %s: %v", modelRepo.Name, err))
+		}
+		storageResults[modelRepo.Name] = result
+	}
+
 	// Create one Deployment and Service per ModelRef
 	totalReady := 0
 	totalDeployments := len(modelRepos)
@@ -150,12 +164,13 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Create component context
 		compCtx := component.LLMEngineContext{
-			Context:   ctx,
-			Client:    r.Client,
-			Scheme:    r.Scheme,
-			LLMEngine: llmEngine,
-			ModelRepo: modelRepo,
-			Namespace: llmEngine.Namespace,
+			Context:      ctx,
+			Client:       r.Client,
+			Scheme:       r.Scheme,
+			LLMEngine:    llmEngine,
+			ModelRepo:    modelRepo,
+			Namespace:    llmEngine.Namespace,
+			ModelPVCName: storageResults[modelRepo.Name].PVCName,
 		}
 
 		// Reconcile component (creates/updates Deployment and Service)
@@ -394,6 +409,15 @@ func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitri
 }
 
 func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {
+	logger := log.FromContext(ctx)
+
+	// Cleanup read-only PV+PVC for each model reference (never touches underlying data)
+	for _, ref := range llmEngine.Spec.ModelRefs {
+		if err := storage.CleanupLLMEngineStorage(ctx, r.Client, llmEngine, ref.Name); err != nil {
+			logger.Error(err, "Failed to cleanup storage for model", "model", ref.Name)
+		}
+	}
+
 	// Remove finalizer with retry to handle conflicts
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get fresh copy

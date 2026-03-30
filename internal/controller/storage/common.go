@@ -29,6 +29,7 @@ const (
 	ModelRepositoryFinalizer   = "modelrepository.aitrigram.cliver-project.github.io/finalizer"
 	LLMEngineFinalizer         = "llmengine.aitrigram.cliver-project.github.io/finalizer"
 	StorageProtectionFinalizer = "modelrepository.aitrigram.cliver-project.github.io/storage-protection"
+	LLMEngineStorageFinalizer  = "llmengine.aitrigram.cliver-project.github.io/storage-protection"
 )
 
 // getOrDefaultMountPath returns the mount path, or default if empty

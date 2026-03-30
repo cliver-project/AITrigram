@@ -203,7 +203,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2026-03-30T02:25:03Z"
+    createdAt: "2026-03-30T13:22:37Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -257,12 +257,22 @@ spec:
           - ""
           resources:
           - nodes
-          - persistentvolumes
           - pods
           - secrets
           verbs:
           - get
           - list
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - persistentvolumes
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - update
           - watch
         - apiGroups:
           - aitrigram.cliver-project.github.io

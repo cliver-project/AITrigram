@@ -52,13 +52,12 @@ func AdaptDeployment(ctx component.LLMEngineContext, deployment *appsv1.Deployme
 	// Build storage paths
 	modelPath, _ := GetStoragePaths(llmEngine, modelRepo)
 
-	// TODO: Create a read-only PVC in the LLMEngine's namespace that points to the same
-	// storage backend as the ModelRepository's PVC. PVCs are namespace-scoped, so the
-	// LLMEngine cannot directly mount the ModelRepository's PVC from a different namespace.
-	// For now, use the PVC name from BackendRef (only works same-namespace).
-	volumeSource, err := getModelVolumeSource(modelRepo)
-	if err != nil {
-		return fmt.Errorf("failed to get storage volume source: %w", err)
+	// Use the read-only PVC created by EnsureLLMEngineStorage in the LLMEngine's namespace
+	volumeSource := corev1.VolumeSource{
+		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+			ClaimName: ctx.ModelPVCName,
+			ReadOnly:  true,
+		},
 	}
 
 	// Add model storage volume mount to container
@@ -181,28 +180,6 @@ func AdaptDeployment(ctx component.LLMEngineContext, deployment *appsv1.Deployme
 	}
 
 	return nil
-}
-
-// getModelVolumeSource returns a volume source for mounting the model storage.
-// TODO: This currently assumes the PVC is in the same namespace as the LLMEngine.
-// Needs redesign to create a read-only PVC in the LLMEngine's namespace for cross-namespace access.
-func getModelVolumeSource(modelRepo *aitrigramv1.ModelRepository) (corev1.VolumeSource, error) {
-	if modelRepo.Status.Storage == nil || modelRepo.Status.Storage.BackendRef == nil {
-		return corev1.VolumeSource{}, fmt.Errorf("storage status not available yet")
-	}
-
-	details := modelRepo.Status.Storage.BackendRef.Details
-	pvcName := details["pvcName"]
-	if pvcName == "" {
-		return corev1.VolumeSource{}, fmt.Errorf("pvcName not found in backend reference")
-	}
-
-	return corev1.VolumeSource{
-		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-			ClaimName: pvcName,
-			ReadOnly:  true,
-		},
-	}, nil
 }
 
 // setDeploymentLabels sets the labels for deployment, selector, and pod template.

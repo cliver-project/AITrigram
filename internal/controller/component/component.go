@@ -41,4 +41,7 @@ type LLMEngineContext struct {
 
 	// Namespace where resources are created (same as LLMEngine namespace)
 	Namespace string
+
+	// ModelPVCName is the name of the read-only PVC in this namespace for model storage
+	ModelPVCName string
 }

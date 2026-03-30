@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/cliver-project/aitrigram-controller
-  newTag: dev-v7
+  newTag: dev-v9

@@ -29,12 +29,22 @@ rules:
   - ""
   resources:
   - nodes
-  - persistentvolumes
   - pods
   - secrets
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
   - watch
 - apiGroups:
   - aitrigram.cliver-project.github.io
