@@ -21,7 +21,8 @@ OLLAMA_HOME=${OLLAMA_HOME:-/data/models}
 export OLLAMA_MODELS="$OLLAMA_HOME"
 
 # Compose full model identifier with revision tag if provided
-if [ -n "${REVISION_ID:-}" ]; then
+# Skip if MODEL_ID already contains a tag (e.g., "qwen2.5:0.5b")
+if [ -n "${REVISION_ID:-}" ] && [[ "$MODEL_ID" != *":"* ]]; then
     FULL_MODEL_ID="${MODEL_ID}:${REVISION_ID}"
 else
     FULL_MODEL_ID="${MODEL_ID}"

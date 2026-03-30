@@ -13,12 +13,12 @@ metadata:
 spec:
   source:
     origin: ollama
-    # Using qwen2.5:0.5b - very small model (~395MB) for fast testing
-    modelId: qwen2.5:0.5b
+    modelId: qwen2.5
+    revision: "0.5b"
 
   storage:
     size: "10Gi"
-    storageClass: "hostpath"
+    storageClass: "auto"
     mountPath: /data/models
 
   autoDownload: true

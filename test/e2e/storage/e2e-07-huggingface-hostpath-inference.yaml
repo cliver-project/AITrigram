@@ -18,7 +18,7 @@ spec:
 
   storage:
     size: "10Gi"
-    storageClass: "hostpath"
+    storageClass: "auto"
     mountPath: /data/models
 
   autoDownload: true

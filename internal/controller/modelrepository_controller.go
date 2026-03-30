@@ -25,7 +25,6 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,6 +61,8 @@ type ModelRepositoryReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 
 func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -98,12 +99,6 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 
-	// Update storage status in ModelRepository
-	if err := r.updateStorageStatus(ctx, modelRepo, provider); err != nil {
-		logger.Error(err, "Failed to update storage status")
-		// Don't fail reconciliation, just log the error
-	}
-
 	// Handle deletion
 	if modelRepo.GetDeletionTimestamp() != nil {
 		return ctrl.Result{}, r.handleDeletion(ctx, modelRepo, provider)
@@ -125,41 +120,45 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 
-	// Provision storage (create PVC if needed)
+	// Step 1: Provision storage (create PVC if needed)
 	namespace := r.OperatorNamespace
 	if namespace == "" {
 		namespace = defaultNamespace
 	}
 
-	status, err := provider.GetStatus(ctx, namespace)
-	if err != nil {
-		logger.Error(err, "Failed to get storage status")
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	if err := provider.CreateStorage(ctx, namespace); err != nil {
+		logger.Error(err, "Failed to provision storage")
+		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
+			fmt.Sprintf("Failed to provision storage: %v", err))
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 
-	if !status.Ready {
-		logger.Info("Storage not ready, attempting to provision", "message", status.Message)
-
-		if err := provider.CreateStorage(ctx, namespace); err != nil {
-			logger.Error(err, "Failed to provision storage")
-			_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
-				fmt.Sprintf("Failed to provision storage: %v", err))
+	// Step 2: Update storage status from the bound PV
+	// For RWO storage, we MUST wait for the PVC to bind so we know the boundNodeName
+	// before creating download jobs (they need node affinity to run on the correct node).
+	// For RWX storage, we can proceed immediately — any node can access the storage.
+	if err := r.updateStorageStatus(ctx, modelRepo, provider); err != nil {
+		if !provider.IsShared() {
+			// RWO: must wait for PVC to bind to discover node
+			logger.Info("RWO storage: waiting for PVC to bind to determine node affinity", "error", err.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		// RWX: storage status update failed but we can proceed — no node affinity needed
+		logger.V(1).Info("RWX storage: proceeding without full storage status", "error", err.Error())
+	} else {
+		// Refresh modelRepo and provider with updated status
+		if err := r.Get(ctx, client.ObjectKeyFromObject(modelRepo), modelRepo); err != nil {
+			return ctrl.Result{}, err
+		}
+		provider, err = r.StorageFactory.CreateProvider(ctx, modelRepo)
+		if err != nil {
 			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
-
-		status, err = provider.GetStatus(ctx, namespace)
-		if err != nil {
-			logger.Error(err, "Failed to get storage status after provisioning")
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-		}
-
-		if !status.Ready {
-			logger.Info("Storage provisioned but not yet ready, will retry", "message", status.Message)
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-		}
 	}
 
-	logger.V(1).Info("Storage is ready", "message", status.Message)
+	logger.V(1).Info("Storage is ready",
+		"shared", provider.IsShared(),
+		"boundNode", storage.GetBoundNodeName(modelRepo))
 
 	// Handle revision-based downloads
 	if !modelRepo.Spec.AutoDownload {
@@ -224,46 +223,6 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				}
 			}
 
-			// For node-bound storage without a BoundNodeName, select a node based on NodeSelector
-			if !provider.IsShared() {
-				boundNode := ""
-				if modelRepo.Status.Storage != nil {
-					boundNode = modelRepo.Status.Storage.BoundNodeName
-				}
-				if boundNode == "" && len(modelRepo.Spec.NodeSelector) > 0 {
-					nodeName, err := r.selectNodeByLabels(ctx, modelRepo.Spec.NodeSelector)
-					if err != nil {
-						logger.Error(err, "Failed to select node based on nodeSelector")
-						// Update revision status to Failed
-						revStatus.Status = aitrigramv1.DownloadPhaseFailed
-						_ = r.updateRevisionStatus(ctx, modelRepo, revStatus)
-						_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
-							fmt.Sprintf("Failed to select node: %v", err))
-						return ctrl.Result{}, err
-					}
-					if nodeName != "" {
-						// Update BoundNodeName before creating the job
-						if err := r.updateBoundNodeName(ctx, modelRepo, nodeName); err != nil {
-							logger.Error(err, "Failed to update bound node name")
-							return ctrl.Result{}, err
-						}
-						// Refresh modelRepo to get updated status
-						if err := r.Get(ctx, client.ObjectKeyFromObject(modelRepo), modelRepo); err != nil {
-							return ctrl.Result{}, err
-						}
-						// Recreate provider with updated modelRepo
-						provider, err = r.StorageFactory.CreateProvider(ctx, modelRepo)
-						if err != nil {
-							logger.Error(err, "Failed to recreate storage provider")
-							return ctrl.Result{}, err
-						}
-						logger.Info("Pre-selected node for node-bound storage",
-							"node", nodeName,
-							"modelRepo", modelRepo.Name)
-					}
-				}
-			}
-
 			// Create download job
 			job, err := r.createRevisionDownloadJob(ctx, modelRepo, provider, revRef)
 			if err != nil {
@@ -319,6 +278,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 					return ctrl.Result{}, err
 				}
 
+
 			} else if job.Status.Failed > 0 {
 				// Job failed - this is an error condition
 				logger.Error(fmt.Errorf("revision download job failed"), "Job has failed", "revision", revRef.Name, "job", jobName)
@@ -362,23 +322,6 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			}
 		}
 
-		// For node-bound storage, track the node binding
-		if !provider.IsShared() {
-			boundNode := ""
-			if modelRepo.Status.Storage != nil {
-				boundNode = modelRepo.Status.Storage.BoundNodeName
-			}
-			if boundNode == "" && job.Status.Active > 0 {
-				nodeName, err := r.getRevisionJobNodeName(ctx, jobName)
-				if err == nil && nodeName != "" {
-					if err := r.updateBoundNodeName(ctx, modelRepo, nodeName); err != nil {
-						logger.Error(err, "Failed to update bound node name")
-					} else {
-						logger.Info("Bound ModelRepository to node", "node", nodeName, "revision", revRef.Name)
-					}
-				}
-			}
-		}
 	}
 
 	// Update overall phase
@@ -446,56 +389,30 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 	// No dependencies - proceed with cleanup
 	logger.Info("No LLMEngine dependencies found, proceeding with deletion")
 
-	// Only proceed with cleanup if provider was successfully created
+	namespace := r.OperatorNamespace
+	if namespace == "" {
+		namespace = defaultNamespace
+	}
+
+	// Delete all jobs owned by this ModelRepository (download and cleanup)
+	jobList := &batchv1.JobList{}
+	if err := r.List(ctx, jobList, client.InNamespace(namespace), client.MatchingLabels{
+		"modelrepository.aitrigram.cliver-project.github.io/name": modelRepo.Name,
+	}); err == nil {
+		propagation := metav1.DeletePropagationBackground
+		for i := range jobList.Items {
+			logger.Info("Deleting job", "job", jobList.Items[i].Name)
+			_ = r.Delete(ctx, &jobList.Items[i], &client.DeleteOptions{
+				PropagationPolicy: &propagation,
+			})
+		}
+	}
+
+	// Cleanup storage (PVC)
 	if provider != nil {
-		// Create cleanup jobs for each downloaded revision
-		// Only clean up revisions that are in Ready state (actually downloaded)
-		revisionsToCleanup := []string{}
-		for _, revStatus := range modelRepo.Status.AvailableRevisions {
-			if revStatus.Status == aitrigramv1.DownloadPhaseReady {
-				revisionsToCleanup = append(revisionsToCleanup, revStatus.Name)
-			}
+		if err := provider.Cleanup(ctx, namespace); err != nil {
+			logger.Error(err, "Failed to cleanup storage, will still remove finalizer")
 		}
-
-		if len(revisionsToCleanup) > 0 {
-			logger.Info("Creating cleanup jobs for downloaded revisions",
-				"revisions", revisionsToCleanup)
-
-			// Create a cleanup job for each downloaded revision
-			for _, revision := range revisionsToCleanup {
-				if err := r.createCleanupJob(ctx, modelRepo, provider, revision); err != nil {
-					logger.Error(err, "Failed to create cleanup job for revision, will still remove finalizer",
-						"revision", revision)
-					// We still want to remove the finalizer even if cleanup fails
-					// to avoid blocking deletion, but log the error
-				} else {
-					logger.Info("Created cleanup job for revision", "revision", revision)
-				}
-			}
-		} else {
-			logger.Info("No downloaded revisions to cleanup",
-				"phase", modelRepo.Status.Phase)
-		}
-
-		// Cleanup storage (PVC)
-		// IMPORTANT: Check if other ModelRepositories are still using this storage before cleanup
-		cleanupNamespace := r.OperatorNamespace
-		if cleanupNamespace == "" {
-			cleanupNamespace = "default"
-		}
-
-		canCleanup, err := r.canCleanupStorage(ctx, modelRepo)
-		if err != nil {
-			logger.Error(err, "Failed to check storage dependencies, will skip cleanup")
-		} else if !canCleanup {
-			logger.Info("Skipping storage cleanup - other ModelRepositories are still using this storage")
-		} else {
-			if err := provider.Cleanup(ctx, cleanupNamespace); err != nil {
-				logger.Error(err, "Failed to cleanup storage, will still remove finalizer")
-			}
-		}
-	} else {
-		logger.Info("Provider is nil, skipping cleanup job and storage cleanup")
 	}
 
 	// Remove finalizer with retry to handle conflicts
@@ -765,83 +682,32 @@ func (r *ModelRepositoryReconciler) extractBackendIdentifier(backendRef *aitrigr
 	return ""
 }
 
-// updateBoundNodeName updates the BoundNodeName field in the ModelRepository storage status
-func (r *ModelRepositoryReconciler) updateBoundNodeName(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, nodeName string) error {
-	logger := log.FromContext(ctx)
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy of the resource
-		key := client.ObjectKeyFromObject(modelRepo)
-		fresh := &aitrigramv1.ModelRepository{}
-		if err := r.Get(ctx, key, fresh); err != nil {
-			return err
-		}
-
-		// Initialize storage status if needed
-		if fresh.Status.Storage == nil {
-			fresh.Status.Storage = &aitrigramv1.StorageStatus{}
-		}
-
-		// Update bound node name on the fresh copy
-		fresh.Status.Storage.BoundNodeName = nodeName
-		logger.Info("Setting bound node name",
-			"modelRepo", modelRepo.Name,
-			"nodeName", nodeName)
-
-		return r.Status().Update(ctx, fresh)
-	})
-}
-
-// --- Revision Management Functions ---
-
-// getRevisionJobNodeName gets the node name where a revision download job is running
-func (r *ModelRepositoryReconciler) getRevisionJobNodeName(ctx context.Context, jobName string) (string, error) {
-	logger := log.FromContext(ctx)
-
-	namespace := r.OperatorNamespace
-	if namespace == "" {
-		namespace = defaultNamespace
-	}
-
-	// List pods owned by this job
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{
-		"job-name": jobName,
-	}); err != nil {
-		return "", fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
-	}
-
-	// Find a pod that has been scheduled
-	for _, pod := range podList.Items {
-		if pod.Spec.NodeName != "" {
-			logger.Info("Found revision job pod node", "job", jobName, "pod", pod.Name, "node", pod.Spec.NodeName)
-			return pod.Spec.NodeName, nil
-		}
-	}
-
-	return "", nil
-}
-
 // --- Revision Management Helper Functions ---
 
 // getDesiredRevisions returns the list of revisions that should be downloaded
-// If spec.Revision is nil, returns a default revision based on the model source
+// Uses spec.source.revisions if specified, otherwise creates a single revision
+// from spec.source.revision (or the origin default)
 func (r *ModelRepositoryReconciler) getDesiredRevisions(modelRepo *aitrigramv1.ModelRepository) []aitrigramv1.RevisionReference {
-	if modelRepo.Spec.Revision != nil && len(modelRepo.Spec.Revision.Revisions) > 0 {
-		return modelRepo.Spec.Revision.Revisions
+	if len(modelRepo.Spec.Source.Revisions) > 0 {
+		return modelRepo.Spec.Source.Revisions
 	}
 
-	// If no revisions specified, create a default one based on the source origin
-	defaultRef := r.getDefaultRevision(modelRepo)
+	// Use spec.source.revision or fall back to origin default
+	rev := r.getCurrentRevision(modelRepo)
 	return []aitrigramv1.RevisionReference{
 		{
-			Name: defaultRef,
-			Ref:  defaultRef,
+			Name: rev,
+			Ref:  rev,
 		},
 	}
 }
 
-// getDefaultRevision returns the default revision name based on the model source origin
-func (r *ModelRepositoryReconciler) getDefaultRevision(modelRepo *aitrigramv1.ModelRepository) string {
+// getCurrentRevision returns the current revision from spec.source.revision
+// or a default based on the model source origin
+func (r *ModelRepositoryReconciler) getCurrentRevision(modelRepo *aitrigramv1.ModelRepository) string {
+	if modelRepo.Spec.Source.Revision != "" {
+		return modelRepo.Spec.Source.Revision
+	}
 	switch modelRepo.Spec.Source.Origin {
 	case aitrigramv1.ModelOriginHuggingFace:
 		return "main"
@@ -1035,43 +901,6 @@ func hashString(s string) string {
 	h := fnv.New32a()
 	h.Write([]byte(s))
 	return fmt.Sprintf("%x", h.Sum32())
-}
-
-// selectNodeByLabels selects a node matching the given nodeSelector labels.
-// Returns the first matching node's name, or empty string if none found.
-func (r *ModelRepositoryReconciler) selectNodeByLabels(ctx context.Context, nodeSelector map[string]string) (string, error) {
-	if len(nodeSelector) == 0 {
-		return "", nil
-	}
-
-	logger := log.FromContext(ctx)
-
-	// List all nodes
-	nodeList := &corev1.NodeList{}
-	if err := r.List(ctx, nodeList); err != nil {
-		return "", fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	// Filter nodes by nodeSelector labels
-	for _, node := range nodeList.Items {
-		// Check if all nodeSelector labels match
-		allMatch := true
-		for key, value := range nodeSelector {
-			if nodeValue, exists := node.Labels[key]; !exists || nodeValue != value {
-				allMatch = false
-				break
-			}
-		}
-
-		if allMatch {
-			logger.Info("Selected node based on nodeSelector",
-				"node", node.Name,
-				"nodeSelector", nodeSelector)
-			return node.Name, nil
-		}
-	}
-
-	return "", fmt.Errorf("no nodes found matching nodeSelector: %v", nodeSelector)
 }
 
 func (r *ModelRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -68,6 +68,17 @@ type ModelSource struct {
 	// +kubebuilder:validation:Required
 	ModelId string `json:"modelId"`
 
+	// Revision is the current active revision to download and serve
+	// For HuggingFace: git ref (branch, tag, or commit hash), defaults to "main"
+	// For Ollama: model tag (e.g., "0.5b", "7b"), defaults to "latest"
+	// +optional
+	Revision string `json:"revision,omitempty"`
+
+	// Revisions is a list of additional revisions to track and maintain
+	// Each revision will be downloaded and stored separately alongside the current revision
+	// +optional
+	Revisions []RevisionReference `json:"revisions,omitempty"`
+
 	// HFTokenSecret is the name of the secret containing the HuggingFace token
 	// The secret should exist in the controller's namespace
 	// Only used when origin is "huggingface"
@@ -93,21 +104,6 @@ type RevisionReference struct {
 	// For other sources: version identifier
 	// +kubebuilder:validation:Required
 	Ref string `json:"ref"`
-}
-
-// RevisionSpec defines how revisions are managed
-type RevisionSpec struct {
-	// Current is the currently active revision that new LLMEngines will use by default
-	// Can be a tag, branch, or commit hash
-	// Defaults to "main" for HuggingFace
-	// +optional
-	// +kubebuilder:default="main"
-	Current string `json:"current"`
-
-	// Revisions is a list of revisions to track and maintain
-	// Each revision will be downloaded and stored separately
-	// +optional
-	Revisions []RevisionReference `json:"revisions,omitempty"`
 }
 
 // ModelRepositorySpec defines the desired state of ModelRepository
@@ -157,11 +153,6 @@ type ModelRepositorySpec struct {
 	// Example: {"kubernetes.io/hostname": "kind-control-plane"}
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-
-	// Revision specifies the revision management configuration
-	// When not specified, defaults to a single revision based on the model source origin
-	// +optional
-	Revision *RevisionSpec `json:"revision,omitempty"`
 }
 
 // DownloadPhase defines the phase of download operations for both ModelRepository and Revisions
@@ -213,7 +204,7 @@ type ModelRepositoryStatus struct {
 	Storage *StorageStatus `json:"storage,omitempty"`
 
 	// AvailableRevisions lists all downloaded and available revisions
-	// Only populated when spec.revision is specified
+	// Only populated when spec.source.revisions is specified
 	// +optional
 	AvailableRevisions []RevisionStatus `json:"availableRevisions,omitempty"`
 }

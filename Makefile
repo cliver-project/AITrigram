@@ -160,6 +160,13 @@ build: manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go run
 
+.PHONY: minikube-deploy
+minikube-deploy: docker-build ## Build and deploy to minikube in one step.
+	minikube image load ${IMG}
+	kubectl -n aitrigram-system set image deployment/aitrigram-controller-manager manager=${IMG}
+	kubectl -n aitrigram-system rollout restart deployment/aitrigram-controller-manager
+	kubectl -n aitrigram-system rollout status deployment/aitrigram-controller-manager --timeout=60s
+
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/

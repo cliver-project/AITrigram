@@ -203,7 +203,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2026-03-29T14:17:51Z"
+    createdAt: "2026-03-30T02:25:03Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1
@@ -257,6 +257,7 @@ spec:
           - ""
           resources:
           - nodes
+          - persistentvolumes
           - pods
           - secrets
           verbs:
@@ -315,6 +316,14 @@ spec:
           - list
           - patch
           - update
+          - watch
+        - apiGroups:
+          - storage.k8s.io
+          resources:
+          - storageclasses
+          verbs:
+          - get
+          - list
           - watch
         - apiGroups:
           - authentication.k8s.io

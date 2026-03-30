@@ -250,7 +250,7 @@ func (p *StorageClassProvider) GetStorageStatus(ctx context.Context, namespace s
 
 	accessMode := string(p.detectedSCInfo.AccessMode)
 	storageStatus := &aitrigramv1.StorageStatus{
-		StorageClass: p.storageClass,
+		StorageClass: p.detectedSCInfo.Name,
 		AccessMode:   accessMode,
 		VolumeMode:   "Filesystem",
 	}
@@ -261,20 +261,24 @@ func (p *StorageClassProvider) GetStorageStatus(ctx context.Context, namespace s
 		}
 	}
 
-	// For RWO, track bound node
-	if p.detectedSCInfo.AccessMode == corev1.ReadWriteOnce && p.modelRepo.Status.Storage != nil {
-		storageStatus.BoundNodeName = p.modelRepo.Status.Storage.BoundNodeName
-	}
-
-	// Extract the ACTUAL backend from the bound PV
+	// Extract details from the bound PV
 	if pvc.Status.Phase != corev1.ClaimBound || pvc.Spec.VolumeName == "" {
 		// PVC not bound yet, return error to trigger retry
 		return nil, fmt.Errorf("PVC %s/%s is not bound yet (phase: %s)", namespace, p.pvcName, pvc.Status.Phase)
 	}
 
-	backendRef, err := p.extractBackendFromPV(ctx, pvc.Spec.VolumeName, namespace)
+	pv := &corev1.PersistentVolume{}
+	if err := p.client.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
+		return nil, fmt.Errorf("failed to get PV %s: %w", pvc.Spec.VolumeName, err)
+	}
+
+	// For RWO, extract bound node from PV's node affinity
+	if p.detectedSCInfo.AccessMode == corev1.ReadWriteOnce {
+		storageStatus.BoundNodeName = extractNodeNameFromPV(pv)
+	}
+
+	backendRef, err := p.extractBackendFromPV(pv, namespace)
 	if err != nil {
-		// Log and return error instead of masking with "unknown" type
 		return nil, fmt.Errorf("failed to extract backend from PV %s: %w", pvc.Spec.VolumeName, err)
 	}
 
@@ -282,14 +286,25 @@ func (p *StorageClassProvider) GetStorageStatus(ctx context.Context, namespace s
 	return storageStatus, nil
 }
 
-// extractBackendFromPV queries the PersistentVolume and extracts the actual storage backend details
-// IMPORTANT: Always includes pvcName in details so LLMEngine can mount the volume via PVC
-func (p *StorageClassProvider) extractBackendFromPV(ctx context.Context, pvName string, namespace string) (*aitrigramv1.BackendReference, error) {
-	pv := &corev1.PersistentVolume{}
-	err := p.client.Get(ctx, types.NamespacedName{Name: pvName}, pv)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get PV %s: %w", pvName, err)
+// extractNodeNameFromPV extracts the bound node name from a PV's node affinity
+// This is set by topology-aware provisioners (hostpath, local-path, etc.)
+func extractNodeNameFromPV(pv *corev1.PersistentVolume) string {
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return ""
 	}
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn && len(expr.Values) > 0 {
+				return expr.Values[0]
+			}
+		}
+	}
+	return ""
+}
+
+// extractBackendFromPV extracts the actual storage backend details from a PV
+// IMPORTANT: Always includes pvcName in details so LLMEngine can mount the volume via PVC
+func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume, namespace string) (*aitrigramv1.BackendReference, error) {
 
 	// Generate subPath for this ModelRepository
 	subPath := fmt.Sprintf("/modelrepositories/%s", p.modelRepo.Name)
@@ -446,5 +461,5 @@ func (p *StorageClassProvider) extractBackendFromPV(ctx context.Context, pvName 
 	}
 
 	// Unknown PV type - return error instead of masking with "unknown"
-	return nil, fmt.Errorf("unable to determine backend type for PV %s (no recognized volume source found)", pvName)
+	return nil, fmt.Errorf("unable to determine backend type for PV %s (no recognized volume source found)", pv.Name)
 }

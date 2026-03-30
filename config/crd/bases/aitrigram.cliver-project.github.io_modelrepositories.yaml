@@ -80,41 +80,6 @@ spec:
                   This is particularly important when using the storages which needs to ensure jobs run on the correct nodes
                   Example: {"kubernetes.io/hostname": "kind-control-plane"}
                 type: object
-              revision:
-                description: |-
-                  Revision specifies the revision management configuration
-                  When not specified, defaults to a single revision based on the model source origin
-                properties:
-                  current:
-                    default: main
-                    description: |-
-                      Current is the currently active revision that new LLMEngines will use by default
-                      Can be a tag, branch, or commit hash
-                      Defaults to "main" for HuggingFace
-                    type: string
-                  revisions:
-                    description: |-
-                      Revisions is a list of revisions to track and maintain
-                      Each revision will be downloaded and stored separately
-                    items:
-                      description: RevisionReference references a specific model revision
-                      properties:
-                        name:
-                          description: Name is a user-friendly name for this revision
-                            (e.g., "v1.0.0", "stable")
-                          type: string
-                        ref:
-                          description: |-
-                            Ref is the actual reference (tag, branch, or commit hash)
-                            For HuggingFace: git ref
-                            For other sources: version identifier
-                          type: string
-                      required:
-                      - name
-                      - ref
-                      type: object
-                    type: array
-                type: object
               source:
                 description: Source defines where to download the model from
                 properties:
@@ -143,6 +108,34 @@ spec:
                     - huggingface
                     - ollama
                     type: string
+                  revision:
+                    description: |-
+                      Revision is the current active revision to download and serve
+                      For HuggingFace: git ref (branch, tag, or commit hash), defaults to "main"
+                      For Ollama: model tag (e.g., "0.5b", "7b"), defaults to "latest"
+                    type: string
+                  revisions:
+                    description: |-
+                      Revisions is a list of additional revisions to track and maintain
+                      Each revision will be downloaded and stored separately alongside the current revision
+                    items:
+                      description: RevisionReference references a specific model revision
+                      properties:
+                        name:
+                          description: Name is a user-friendly name for this revision
+                            (e.g., "v1.0.0", "stable")
+                          type: string
+                        ref:
+                          description: |-
+                            Ref is the actual reference (tag, branch, or commit hash)
+                            For HuggingFace: git ref
+                            For other sources: version identifier
+                          type: string
+                      required:
+                      - name
+                      - ref
+                      type: object
+                    type: array
                 required:
                 - modelId
                 type: object
@@ -182,7 +175,7 @@ spec:
               availableRevisions:
                 description: |-
                   AvailableRevisions lists all downloaded and available revisions
-                  Only populated when spec.revision is specified
+                  Only populated when spec.source.revisions is specified
                 items:
                   description: RevisionStatus describes a specific revision's state
                   properties:
