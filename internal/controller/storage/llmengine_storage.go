@@ -212,7 +212,7 @@ func buildReadOnlyPVSpec(backendRef *aitrigramv1.BackendReference, storageStatus
 	details := backendRef.Details
 
 	switch backendRef.Type {
-	case "nfs":
+	case BackendTypeNFS:
 		server := details["server"]
 		exportPath := details["exportPath"]
 		if server == "" || exportPath == "" {
@@ -226,7 +226,7 @@ func buildReadOnlyPVSpec(backendRef *aitrigramv1.BackendReference, storageStatus
 			},
 		}
 
-	case "hostpath":
+	case BackendTypeHostPath:
 		path := details["path"]
 		if path == "" {
 			return nil, fmt.Errorf("hostpath backend missing path")
@@ -257,7 +257,7 @@ func buildReadOnlyPVSpec(backendRef *aitrigramv1.BackendReference, storageStatus
 			}
 		}
 
-	case "cephfs":
+	case BackendTypeCephFS:
 		monitors := details["monitors"]
 		path := details["path"]
 		if monitors == "" {
@@ -271,7 +271,7 @@ func buildReadOnlyPVSpec(backendRef *aitrigramv1.BackendReference, storageStatus
 			},
 		}
 
-	case "longhorn", "csi":
+	case BackendTypeLonghorn, BackendTypeCSI:
 		driver := details["driver"]
 		volumeID := details["volumeID"]
 		if driver == "" || volumeID == "" {

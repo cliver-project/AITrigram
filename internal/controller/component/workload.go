@@ -2,6 +2,7 @@ package component
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/cliver-project/AITrigram/internal/controller/assets"
 	appsv1 "k8s.io/api/apps/v1"
@@ -209,44 +210,68 @@ func (w *llmEngineWorkload) applyObject(ctx LLMEngineContext, obj client.Object)
 		return err
 	}
 
-	// Update existing object
-	// Copy labels and annotations for all types
-	existing.SetLabels(obj.GetLabels())
-	existing.SetAnnotations(obj.GetAnnotations())
+	// Update existing object — only if something actually changed
+	needsUpdate := false
+
+	// Check labels and annotations
+	if !reflect.DeepEqual(existing.GetLabels(), obj.GetLabels()) {
+		existing.SetLabels(obj.GetLabels())
+		needsUpdate = true
+	}
+	if !reflect.DeepEqual(existing.GetAnnotations(), obj.GetAnnotations()) {
+		existing.SetAnnotations(obj.GetAnnotations())
+		needsUpdate = true
+	}
 
 	// Type-specific updates for known types
 	switch typedObj := obj.(type) {
 	case *corev1.ConfigMap:
 		existingCM := existing.(*corev1.ConfigMap)
-		existingCM.Data = typedObj.Data
-		existingCM.BinaryData = typedObj.BinaryData
+		if !reflect.DeepEqual(existingCM.Data, typedObj.Data) || !reflect.DeepEqual(existingCM.BinaryData, typedObj.BinaryData) {
+			existingCM.Data = typedObj.Data
+			existingCM.BinaryData = typedObj.BinaryData
+			needsUpdate = true
+		}
 
 	case *corev1.Secret:
 		existingSecret := existing.(*corev1.Secret)
-		existingSecret.Data = typedObj.Data
-		existingSecret.Type = typedObj.Type
+		if !reflect.DeepEqual(existingSecret.Data, typedObj.Data) || existingSecret.Type != typedObj.Type {
+			existingSecret.Data = typedObj.Data
+			existingSecret.Type = typedObj.Type
+			needsUpdate = true
+		}
 
 	case *appsv1.Deployment:
 		existingDeployment := existing.(*appsv1.Deployment)
-		// Only update mutable fields — never touch Selector (immutable after creation)
-		existingDeployment.Spec.Replicas = typedObj.Spec.Replicas
-		existingDeployment.Spec.Template = typedObj.Spec.Template
-		existingDeployment.Spec.Strategy = typedObj.Spec.Strategy
+		// Only compare mutable fields — never touch Selector (immutable after creation)
+		if !reflect.DeepEqual(existingDeployment.Spec.Replicas, typedObj.Spec.Replicas) ||
+			!reflect.DeepEqual(existingDeployment.Spec.Template, typedObj.Spec.Template) ||
+			!reflect.DeepEqual(existingDeployment.Spec.Strategy, typedObj.Spec.Strategy) {
+			existingDeployment.Spec.Replicas = typedObj.Spec.Replicas
+			existingDeployment.Spec.Template = typedObj.Spec.Template
+			existingDeployment.Spec.Strategy = typedObj.Spec.Strategy
+			needsUpdate = true
+		}
 
 	case *corev1.Service:
 		existingService := existing.(*corev1.Service)
-		// Preserve ClusterIP (immutable after creation)
-		clusterIP := existingService.Spec.ClusterIP
-		existingService.Spec = typedObj.Spec
-		existingService.Spec.ClusterIP = clusterIP
+		// Compare excluding ClusterIP (immutable)
+		desiredSpec := typedObj.Spec.DeepCopy()
+		desiredSpec.ClusterIP = existingService.Spec.ClusterIP
+		if !reflect.DeepEqual(existingService.Spec, *desiredSpec) {
+			clusterIP := existingService.Spec.ClusterIP
+			existingService.Spec = typedObj.Spec
+			existingService.Spec.ClusterIP = clusterIP
+			needsUpdate = true
+		}
 
-	// Add more types as needed
 	default:
-		// For unknown types, replace the entire object
-		// This may not work for all resource types due to immutable fields
 		return ctx.Client.Update(ctx, obj)
 	}
 
+	if !needsUpdate {
+		return nil
+	}
 	return ctx.Client.Update(ctx, existing)
 }
 

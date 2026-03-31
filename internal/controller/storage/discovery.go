@@ -89,16 +89,16 @@ func (d *StorageClassDiscovery) categorizeStorageClass(sc *storagev1.StorageClas
 	// Detect type and access mode from provisioner
 	switch {
 	case strings.Contains(provisioner, "nfs"):
-		info.Type = "nfs"
+		info.Type = BackendTypeNFS
 		info.AccessMode = corev1.ReadWriteMany
 	case strings.Contains(provisioner, "cephfs") || strings.Contains(provisioner, "ceph.rbd.csi"):
-		info.Type = "cephfs"
+		info.Type = BackendTypeCephFS
 		info.AccessMode = corev1.ReadWriteMany
 	case strings.Contains(provisioner, "glusterfs") || strings.Contains(provisioner, "gluster"):
 		info.Type = "glusterfs"
 		info.AccessMode = corev1.ReadWriteMany
 	case provisioner == "driver.longhorn.io":
-		info.Type = "longhorn"
+		info.Type = BackendTypeLonghorn
 		info.AccessMode = corev1.ReadWriteMany
 	case strings.Contains(provisioner, "hostpath") || strings.Contains(provisioner, "local"):
 		info.Type = "local"

@@ -314,7 +314,7 @@ func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume,
 	if pv.Spec.NFS != nil {
 		filesystemID := fmt.Sprintf("nfs://%s%s", pv.Spec.NFS.Server, pv.Spec.NFS.Path)
 		return &aitrigramv1.BackendReference{
-			Type: "nfs",
+			Type: BackendTypeNFS,
 			Details: map[string]string{
 				"filesystemID": filesystemID,
 				"server":       pv.Spec.NFS.Server,
@@ -344,9 +344,9 @@ func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume,
 		}
 
 		// Determine backend type from driver
-		backendType := "csi"
+		backendType := BackendTypeCSI
 		if pv.Spec.CSI.Driver == "nfs.csi.k8s.io" {
-			backendType = "nfs"
+			backendType = BackendTypeNFS
 			if server, ok := pv.Spec.CSI.VolumeAttributes["server"]; ok {
 				if share, ok := pv.Spec.CSI.VolumeAttributes["share"]; ok {
 					details["filesystemID"] = fmt.Sprintf("nfs://%s%s", server, share)
@@ -355,10 +355,10 @@ func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume,
 				}
 			}
 		} else if pv.Spec.CSI.Driver == "cephfs.csi.ceph.com" {
-			backendType = "cephfs"
+			backendType = BackendTypeCephFS
 			details["filesystemID"] = fmt.Sprintf("ceph://%s", pv.Spec.CSI.VolumeHandle)
 		} else if pv.Spec.CSI.Driver == "driver.longhorn.io" {
-			backendType = "longhorn"
+			backendType = BackendTypeLonghorn
 		}
 
 		return &aitrigramv1.BackendReference{
@@ -417,7 +417,7 @@ func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume,
 		}
 		filesystemID := fmt.Sprintf("ceph://%s%s", monitors, pv.Spec.CephFS.Path)
 		return &aitrigramv1.BackendReference{
-			Type: "cephfs",
+			Type: BackendTypeCephFS,
 			Details: map[string]string{
 				"filesystemID": filesystemID,
 				"monitors":     monitors,
@@ -450,7 +450,7 @@ func (p *StorageClassProvider) extractBackendFromPV(pv *corev1.PersistentVolume,
 	// HostPath (should not happen in PVC, but handle it)
 	if pv.Spec.HostPath != nil {
 		return &aitrigramv1.BackendReference{
-			Type: "hostpath",
+			Type: BackendTypeHostPath,
 			Details: map[string]string{
 				"path": pv.Spec.HostPath.Path,
 				// Even for hostpath, might be mounted via PVC in some cases

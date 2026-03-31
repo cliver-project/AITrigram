@@ -19,6 +19,13 @@ limitations under the License.
 package storage
 
 const (
+	// Backend storage types
+	BackendTypeNFS      = "nfs"
+	BackendTypeCephFS   = "cephfs"
+	BackendTypeLonghorn = "longhorn"
+	BackendTypeCSI      = "csi"
+	BackendTypeHostPath = "hostpath"
+
 	// DefaultModelStoragePath is the default mount path for model storage
 	DefaultModelStoragePath = "/data/models"
 
