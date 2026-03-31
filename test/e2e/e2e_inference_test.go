@@ -32,8 +32,6 @@ import (
 )
 
 var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, func() {
-	const testNamespace = namespace // Reuse aitrigram-system from e2e_test.go
-
 	// Set test timeouts - inference can take longer
 	SetDefaultEventuallyTimeout(40 * time.Minute)
 	SetDefaultEventuallyPollingInterval(30 * time.Second)
@@ -41,10 +39,10 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 	Context("Ollama with HostPath Storage - Full Inference Test", func() {
 		const modelRepoName = "ollama-hostpath-inference-test"
 		const engineName = "ollama-hostpath-inference-test"
+		const engineNamespace = "default"
 
 		AfterEach(func() {
-			// Delete LLMEngine first (so ModelRepository deletion isn't blocked by dependency check)
-			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", "default", "--ignore-not-found", "--wait=true", "--timeout=60s")
+			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", engineNamespace, "--ignore-not-found", "--wait=true", "--timeout=60s")
 			output, _ := utils.Run(cmd)
 			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup LLMEngine: %s\n", output)
 
@@ -52,7 +50,7 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 			output, _ = utils.Run(cmd)
 			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup ModelRepository: %s\n", output)
 
-			cmd = exec.Command("kubectl", "delete", "pod", "inference-test-client", "-n", namespace, "--ignore-not-found")
+			cmd = exec.Command("kubectl", "delete", "pod", "inference-test-client", "-n", engineNamespace, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -75,8 +73,8 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 
 			By("waiting for LLMEngine deployment to be created")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", "-n", testNamespace, "-l",
-					"llmengine.aitrigram.cliver-project.github.io/name="+engineName,
+				cmd := exec.Command("kubectl", "get", "deployment", "-n", engineNamespace, "-l",
+					"app="+engineName+",model="+modelRepoName,
 					"-o", "name")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get LLMEngine deployment")
@@ -87,8 +85,8 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 
 			By("waiting for LLMEngine deployment to be ready")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", "-n", testNamespace, "-l",
-					"llmengine.aitrigram.cliver-project.github.io/name="+engineName,
+				cmd := exec.Command("kubectl", "get", "deployment", "-n", engineNamespace, "-l",
+					"app="+engineName+",model="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.readyReplicas}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployment ready replicas")
@@ -99,8 +97,8 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 			By("waiting for service to be created")
 			var serviceName string
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "service", "-n", testNamespace, "-l",
-					"llmengine.aitrigram.cliver-project.github.io/name="+engineName,
+				cmd := exec.Command("kubectl", "get", "service", "-n", engineNamespace, "-l",
+					"app="+engineName+",model="+modelRepoName,
 					"-o", "jsonpath={.items[0].metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get service")
@@ -110,13 +108,13 @@ var _ = Describe("LLMEngine Inference Tests with HostPath Storage", Ordered, fun
 			}).Should(Succeed())
 
 			By("getting service ClusterIP and port")
-			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
+			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", engineNamespace,
 				"-o", "jsonpath={.spec.clusterIP}")
 			serviceIP, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to get service IP")
 			Expect(serviceIP).NotTo(BeEmpty(), "Service IP should not be empty")
 
-			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
+			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", engineNamespace,
 				"-o", "jsonpath={.spec.ports[0].port}")
 			servicePort, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to get service port")
@@ -137,7 +135,7 @@ spec:
     image: curlimages/curl:latest
     command: ["sh", "-c", "sleep 3600"]
   restartPolicy: Never
-`, testNamespace)
+`, engineNamespace)
 
 			cmd = exec.Command("sh", "-c", fmt.Sprintf("echo '%s' | kubectl apply -f -", testPodYaml))
 			_, err = utils.Run(cmd)
@@ -145,7 +143,7 @@ spec:
 
 			By("waiting for test client pod to be ready")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", testNamespace,
+				cmd := exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", engineNamespace,
 					"-o", "jsonpath={.status.phase}")
 				phase, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -154,12 +152,14 @@ spec:
 
 			By("sending inference request to Ollama service")
 			// Ollama API format: POST /api/generate
-			curlCommand := fmt.Sprintf(`curl -s -m 120 http://%s:%s/api/generate -d '{"model": "qwen2.5:0.5b", "prompt": "Say hello world", "stream": false}'`,
+			// The model name is "qwen2.5:0.5b" as downloaded by ollama pull
+			curlCommand := fmt.Sprintf(
+				`curl -s -m 120 http://%s:%s/api/generate -d '{"model": "qwen2.5:0.5b", "prompt": "Say hello world", "stream": false}'`,
 				serviceIP, servicePort)
 
 			var inferenceResponse string
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "exec", "inference-test-client", "-n", testNamespace, "--",
+				cmd := exec.Command("kubectl", "exec", "inference-test-client", "-n", engineNamespace, "--",
 					"sh", "-c", curlCommand)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to execute inference request")
@@ -190,10 +190,10 @@ spec:
 	Context("HuggingFace (vLLM) with HostPath Storage - Full Inference Test", func() {
 		const modelRepoName = "hf-hostpath-inference-test"
 		const engineName = "hf-hostpath-inference-test"
+		const engineNamespace = "aitrigram-system"
 
 		AfterEach(func() {
-			// Delete LLMEngine first (so ModelRepository deletion isn't blocked by dependency check)
-			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", "aitrigram-system", "--ignore-not-found", "--wait=true", "--timeout=60s")
+			cmd := exec.Command("kubectl", "delete", "llmengine", engineName, "-n", engineNamespace, "--ignore-not-found", "--wait=true", "--timeout=60s")
 			output, _ := utils.Run(cmd)
 			_, _ = fmt.Fprintf(GinkgoWriter, "Cleanup LLMEngine: %s\n", output)
 
@@ -228,8 +228,8 @@ spec:
 
 			By("waiting for LLMEngine deployment to be ready")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "deployment", "-n", testNamespace, "-l",
-					"llmengine.aitrigram.cliver-project.github.io/name="+engineName,
+				cmd := exec.Command("kubectl", "get", "deployment", "-n", engineNamespace, "-l",
+					"app="+engineName+",model="+modelRepoName,
 					"-o", "jsonpath={.items[0].status.readyReplicas}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to get deployment ready replicas")
@@ -237,21 +237,21 @@ spec:
 			}).Should(Succeed())
 
 			By("getting service endpoint")
-			cmd = exec.Command("kubectl", "get", "service", "-n", testNamespace, "-l",
-				"llmengine.aitrigram.cliver-project.github.io/name="+engineName,
+			cmd = exec.Command("kubectl", "get", "service", "-n", engineNamespace, "-l",
+				"app="+engineName+",model="+modelRepoName,
 				"-o", "jsonpath={.items[0].metadata.name}")
 			serviceName, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(serviceName).NotTo(BeEmpty())
 
-			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", testNamespace,
+			cmd = exec.Command("kubectl", "get", "service", serviceName, "-n", engineNamespace,
 				"-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}")
 			serviceEndpoint, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			_, _ = fmt.Fprintf(GinkgoWriter, "Service endpoint: %s\n", serviceEndpoint)
 
 			By("creating test client pod if not exists")
-			cmd = exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", testNamespace)
+			cmd = exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", engineNamespace)
 			_, err = utils.Run(cmd)
 			if err != nil {
 				testPodYaml := fmt.Sprintf(`
@@ -266,13 +266,13 @@ spec:
     image: curlimages/curl:latest
     command: ["sh", "-c", "sleep 3600"]
   restartPolicy: Never
-`, testNamespace)
+`, engineNamespace)
 				cmd = exec.Command("sh", "-c", fmt.Sprintf("echo '%s' | kubectl apply -f -", testPodYaml))
 				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 
 				Eventually(func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", testNamespace,
+					cmd := exec.Command("kubectl", "get", "pod", "inference-test-client", "-n", engineNamespace,
 						"-o", "jsonpath={.status.phase}")
 					phase, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
@@ -281,20 +281,19 @@ spec:
 			}
 
 			By("sending inference request to vLLM service")
-			// vLLM OpenAI-compatible API format
-			curlCommand := fmt.Sprintf(`curl -s -m 120 http://%s/v1/completions -H "Content-Type: application/json" -d '{"model": "hf-internal-testing/tiny-random-gpt2", "prompt": "Hello world", "max_tokens": 20}'`,
+			curlCommand := fmt.Sprintf(
+				`curl -s -m 120 http://%s/v1/completions -H "Content-Type: application/json" -d '{"model": "hf-internal-testing/tiny-random-gpt2", "prompt": "Hello world", "max_tokens": 20}'`,
 				serviceEndpoint)
 
 			var inferenceResponse string
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "exec", "inference-test-client", "-n", testNamespace, "--",
+				cmd := exec.Command("kubectl", "exec", "inference-test-client", "-n", engineNamespace, "--",
 					"sh", "-c", curlCommand)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to execute inference request")
 				inferenceResponse = output
 				g.Expect(inferenceResponse).NotTo(BeEmpty(), "Response should not be empty")
 
-				// Parse JSON response
 				var result map[string]interface{}
 				err = json.Unmarshal([]byte(inferenceResponse), &result)
 				g.Expect(err).NotTo(HaveOccurred(), "Response should be valid JSON")
