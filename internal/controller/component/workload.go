@@ -228,11 +228,17 @@ func (w *llmEngineWorkload) applyObject(ctx LLMEngineContext, obj client.Object)
 
 	case *appsv1.Deployment:
 		existingDeployment := existing.(*appsv1.Deployment)
-		existingDeployment.Spec = typedObj.Spec
+		// Only update mutable fields — never touch Selector (immutable after creation)
+		existingDeployment.Spec.Replicas = typedObj.Spec.Replicas
+		existingDeployment.Spec.Template = typedObj.Spec.Template
+		existingDeployment.Spec.Strategy = typedObj.Spec.Strategy
 
 	case *corev1.Service:
 		existingService := existing.(*corev1.Service)
+		// Preserve ClusterIP (immutable after creation)
+		clusterIP := existingService.Spec.ClusterIP
 		existingService.Spec = typedObj.Spec
+		existingService.Spec.ClusterIP = clusterIP
 
 	// Add more types as needed
 	default:

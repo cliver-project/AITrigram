@@ -133,6 +133,7 @@ spec:
   containers:
   - name: curl
     image: curlimages/curl:latest
+    imagePullPolicy: IfNotPresent
     command: ["sh", "-c", "sleep 3600"]
   restartPolicy: Never
 `, engineNamespace)
@@ -264,6 +265,7 @@ spec:
   containers:
   - name: curl
     image: curlimages/curl:latest
+    imagePullPolicy: IfNotPresent
     command: ["sh", "-c", "sleep 3600"]
   restartPolicy: Never
 `, engineNamespace)
