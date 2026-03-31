@@ -28,6 +28,7 @@ spec:
       containers:
       - name: llm-engine
         image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
         args:
         - serve
         ports:
