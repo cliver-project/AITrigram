@@ -20,8 +20,8 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,12 +50,103 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-// Track test failures
+// Track test failures and dump cluster state for debugging
 var _ = ReportAfterEach(func(report SpecReport) {
-	if report.Failed() {
-		suiteHadFailures = true
+	if !report.Failed() {
+		return
 	}
+	suiteHadFailures = true
+	dumpClusterState(report)
 })
+
+// dumpClusterState collects a comprehensive snapshot of all CRs, workloads, and
+// pod logs when a test fails. This runs before AfterEach cleanup, so resources
+// are still present.
+func dumpClusterState(report SpecReport) {
+	namespacesToDump := []string{"aitrigram-system", "default"}
+
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "============================================================\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "  CLUSTER STATE DUMP — Test Failed: %s\n", report.FullText())
+	_, _ = fmt.Fprintf(GinkgoWriter, "============================================================\n\n")
+
+	// --- Custom Resources ---
+	runDumpCmd("ModelRepositories", "kubectl", "get", "modelrepositories", "-o", "yaml")
+	runDumpCmd("LLMEngines (all namespaces)", "kubectl", "get", "llmengines", "--all-namespaces", "-o", "yaml")
+
+	for _, ns := range namespacesToDump {
+		prefix := fmt.Sprintf("[ns=%s]", ns)
+
+		// --- Workloads ---
+		runDumpCmd(prefix+" Deployments", "kubectl", "get", "deployments", "-n", ns, "-o", "wide")
+		runDumpCmd(prefix+" Pods", "kubectl", "get", "pods", "-n", ns, "-o", "wide")
+		runDumpCmd(prefix+" Jobs", "kubectl", "get", "jobs", "-n", ns, "-o", "wide")
+		runDumpCmd(prefix+" Services", "kubectl", "get", "services", "-n", ns, "-o", "wide")
+		runDumpCmd(prefix+" PVCs", "kubectl", "get", "pvc", "-n", ns, "-o", "wide")
+
+		// --- Pod logs (last 100 lines per container) ---
+		dumpPodLogs(ns)
+
+		// --- Describe non-Running pods ---
+		dumpNonRunningPodDescriptions(ns)
+
+		// --- Events (last 50) ---
+		runDumpCmd(prefix+" Events (recent)", "kubectl", "get", "events", "-n", ns,
+			"--sort-by=.lastTimestamp", "--field-selector=type!=Normal")
+	}
+
+	// --- Controller logs (always useful) ---
+	runDumpCmd("Controller Manager Logs (last 200)",
+		"kubectl", "logs", "deployment/aitrigram-controller-manager",
+		"-n", "aitrigram-system", "--tail=200")
+
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n============================================================\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "  END CLUSTER STATE DUMP\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "============================================================\n\n")
+}
+
+// runDumpCmd runs a kubectl command and prints the output under a labeled header.
+func runDumpCmd(label string, args ...string) {
+	cmd := exec.Command(args[0], args[1:]...)
+	output, err := utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- %s ---\n", label)
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "(error: %v)\n", err)
+	} else if strings.TrimSpace(output) == "" {
+		_, _ = fmt.Fprintf(GinkgoWriter, "(empty)\n")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+	}
+}
+
+// dumpPodLogs prints the last 80 lines of logs for every pod in the namespace.
+func dumpPodLogs(ns string) {
+	cmd := exec.Command("kubectl", "get", "pods", "-n", ns,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	output, err := utils.Run(cmd)
+	if err != nil {
+		return
+	}
+	for _, podName := range utils.GetNonEmptyLines(output) {
+		runDumpCmd(fmt.Sprintf("[ns=%s] Logs: %s", ns, podName),
+			"kubectl", "logs", podName, "-n", ns, "--all-containers", "--tail=80")
+	}
+}
+
+// dumpNonRunningPodDescriptions describes pods that are not in Running phase.
+func dumpNonRunningPodDescriptions(ns string) {
+	cmd := exec.Command("kubectl", "get", "pods", "-n", ns,
+		"--field-selector=status.phase!=Running,status.phase!=Succeeded",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	output, err := utils.Run(cmd)
+	if err != nil {
+		return
+	}
+	for _, podName := range utils.GetNonEmptyLines(output) {
+		runDumpCmd(fmt.Sprintf("[ns=%s] Describe non-running pod: %s", ns, podName),
+			"kubectl", "describe", "pod", podName, "-n", ns)
+	}
+}
 
 var _ = BeforeSuite(func() {
 	// Check if CRDs are already installed
@@ -121,109 +212,16 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	// Dump diagnostic information if any tests failed or if E2E_DUMP_LOGS is set
-	dumpLogs := suiteHadFailures || os.Getenv("E2E_DUMP_LOGS") == "true"
-
-	if dumpLogs {
-		By("=== DUMPING DIAGNOSTIC INFORMATION FOR DEBUGGING ===")
-
-		// Dump controller logs
-		By("Fetching controller-manager logs")
-		cmd := exec.Command("kubectl", "logs", "deployment/aitrigram-controller-manager", "-n", "aitrigram-system", "--tail=200")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== CONTROLLER LOGS (last 200 lines) ===\n%s\n", output)
-		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get controller logs: %v\n", err)
-		}
-
-		// Dump all pods in aitrigram-system
-		By("Fetching all pods in aitrigram-system namespace")
-		cmd = exec.Command("kubectl", "get", "pods", "-n", "aitrigram-system", "-o", "wide")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== ALL PODS IN aitrigram-system ===\n%s\n", output)
-		}
-
-		// Dump all jobs in aitrigram-system
-		By("Fetching all jobs in aitrigram-system namespace")
-		cmd = exec.Command("kubectl", "get", "jobs", "-n", "aitrigram-system", "-o", "wide")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== ALL JOBS IN aitrigram-system ===\n%s\n", output)
-		}
-
-		// Dump failed job logs
-		By("Fetching logs from failed jobs")
-		cmd = exec.Command("kubectl", "get", "jobs", "-n", "aitrigram-system", "-o", "jsonpath={.items[?(@.status.failed>=1)].metadata.name}")
-		if failedJobs, err := utils.Run(cmd); err == nil && failedJobs != "" {
-			jobs := utils.GetNonEmptyLines(failedJobs)
-			for _, jobName := range jobs {
-				cmd = exec.Command("kubectl", "logs", "job/"+jobName, "-n", "aitrigram-system", "--tail=100")
-				if output, err := utils.Run(cmd); err == nil {
-					_, _ = fmt.Fprintf(GinkgoWriter, "\n=== FAILED JOB LOGS: %s ===\n%s\n", jobName, output)
-				}
-			}
-		}
-
-		// Dump all ModelRepositories
-		By("Fetching all ModelRepositories")
-		cmd = exec.Command("kubectl", "get", "modelrepositories", "-o", "yaml")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== ALL MODELREPOSITORIES ===\n%s\n", output)
-		}
-
-		// Dump all PVCs in aitrigram-system
-		By("Fetching all PVCs in aitrigram-system namespace")
-		cmd = exec.Command("kubectl", "get", "pvc", "-n", "aitrigram-system", "-o", "wide")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== ALL PVCs IN aitrigram-system ===\n%s\n", output)
-		}
-
-		// Dump events in aitrigram-system (last 50)
-		By("Fetching recent events in aitrigram-system namespace")
-		cmd = exec.Command("kubectl", "get", "events", "-n", "aitrigram-system", "--sort-by=.lastTimestamp")
-		if output, err := utils.Run(cmd); err == nil {
-			lines := utils.GetNonEmptyLines(output)
-			// Get last 50 events
-			startIdx := 0
-			if len(lines) > 50 {
-				startIdx = len(lines) - 50
-			}
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== RECENT EVENTS IN aitrigram-system (last 50) ===\n")
-			for i := startIdx; i < len(lines); i++ {
-				_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", lines[i])
-			}
-		}
-
-		// Dump storage class information
-		By("Fetching all storage classes")
-		cmd = exec.Command("kubectl", "get", "storageclass")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== STORAGE CLASSES ===\n%s\n", output)
-		}
-
-		// Dump NFS server status if it exists
-		By("Fetching NFS server status")
-		cmd = exec.Command("kubectl", "get", "deployment", "nfs-server", "-n", "aitrigram-system", "-o", "yaml")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== NFS SERVER DEPLOYMENT ===\n%s\n", output)
-		}
-
-		// Dump NFS provisioner status if it exists
-		By("Fetching NFS provisioner status")
-		cmd = exec.Command("kubectl", "get", "deployment", "nfs-client-provisioner", "-n", "aitrigram-system", "-o", "yaml")
-		if output, err := utils.Run(cmd); err == nil {
-			_, _ = fmt.Fprintf(GinkgoWriter, "\n=== NFS PROVISIONER DEPLOYMENT ===\n%s\n", output)
-		}
-
-		By("=== END OF DIAGNOSTIC INFORMATION ===")
-
+	if suiteHadFailures {
+		_, _ = fmt.Fprintf(GinkgoWriter, "\nSome tests failed. Per-test cluster state dumps were printed above.\n")
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "\nAll tests passed. Set E2E_DUMP_LOGS=true to always dump diagnostic logs.\n")
+		_, _ = fmt.Fprintf(GinkgoWriter, "\nAll tests passed.\n")
 	}
 
 	// Note: We intentionally do NOT cleanup controller/CRDs in AfterSuite
 	// This allows tests to run multiple times against the same cluster
 	// and supports production-grade clusters where the controller is managed separately
 	// Users can manually run 'make undeploy' and 'make uninstall' if needed
-	_, _ = fmt.Fprintf(GinkgoWriter, "\nTest suite completed. Controller and CRDs remain deployed for reuse.\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed. Controller and CRDs remain deployed for reuse.\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "To cleanup, run: make undeploy && make uninstall\n")
 })
