@@ -36,6 +36,13 @@ spec:
     - name: hf-hostpath-inference-test
   replicas: 1
   servicePort: 8000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
   # Minimal vLLM args for tiny model
   args:
     - --max-model-len=256
