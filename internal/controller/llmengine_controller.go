@@ -115,7 +115,7 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					"boundNode", boundNode)
 			} else {
 				// PV may not have node affinity (e.g., minikube) — proceed without it
-				logger.Info("RWO storage has no boundNodeName, proceeding without node affinity",
+				logger.V(1).Info("RWO storage has no boundNodeName, proceeding without node affinity",
 					"modelRepo", modelRepo.Name)
 			}
 		}
