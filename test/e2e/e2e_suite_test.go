@@ -104,7 +104,10 @@ func dumpClusterState(report SpecReport) {
 			"--sort-by=.lastTimestamp", "--field-selector=type!=Normal")
 	}
 
-	// --- Controller logs (always useful) ---
+	// --- Controller deployment and logs (always useful) ---
+	runDumpCmd("Controller Manager Deployment",
+		"kubectl", "get", "deployment", "aitrigram-controller-manager",
+		"-n", "aitrigram-system", "-o", "yaml")
 	runDumpCmd("Controller Manager Logs (last 200)",
 		"kubectl", "logs", "deployment/aitrigram-controller-manager",
 		"-n", "aitrigram-system", "--tail=200")
