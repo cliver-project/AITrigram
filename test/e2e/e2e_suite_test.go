@@ -50,13 +50,15 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-// Track test failures and dump cluster state for debugging
-var _ = ReportAfterEach(func(report SpecReport) {
-	if !report.Failed() {
-		return
+// Dump cluster state immediately after a test fails, before AfterEach cleanup
+// runs. JustAfterEach executes after It but before AfterEach, so all
+// resources are still present for inspection.
+var _ = JustAfterEach(func() {
+	report := CurrentSpecReport()
+	if report.Failed() {
+		suiteHadFailures = true
+		dumpClusterState(report)
 	}
-	suiteHadFailures = true
-	dumpClusterState(report)
 })
 
 // dumpClusterState collects a comprehensive snapshot of all CRs, workloads, and
