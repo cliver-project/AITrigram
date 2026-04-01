@@ -200,6 +200,12 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
 
+	// Undeploy any existing controller to avoid stale pods blocking the rollout
+	By("removing existing controller deployment")
+	cmd = exec.Command("make", "undeploy")
+	output, _ = utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Undeploy: %s\n", output)
+
 	By("deploying the controller to the cluster")
 	cmd = exec.Command("make", "deploy", "IMG="+controllerIMG)
 	_, err = utils.Run(cmd)
@@ -212,7 +218,7 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to configure namespace PodSecurity settings")
 
-	// Wait for controller to be ready if it was just deployed or already exists
+	// Wait for controller to be ready
 	By("waiting for controller to be ready")
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "deployment", "aitrigram-controller-manager", "-n", "aitrigram-system",
@@ -221,7 +227,35 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get controller deployment status")
 		g.Expect(output).To(Equal("1"), "Controller should have 1 ready replica")
 		_, _ = fmt.Fprintf(GinkgoWriter, "Controller ready replicas: %s\n", output)
-	}).WithTimeout(5 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+	}).WithTimeout(5*time.Minute).WithPolling(5*time.Second).Should(Succeed(), func() string {
+		// Dump diagnostics on timeout so we can see why the controller isn't ready
+		diag := "\n=== Controller startup diagnostics ===\n"
+		cmd := exec.Command("kubectl", "get", "deployment", "aitrigram-controller-manager",
+			"-n", "aitrigram-system", "-o", "yaml")
+		if out, err := utils.Run(cmd); err == nil {
+			diag += "--- Deployment YAML ---\n" + out + "\n"
+		}
+		cmd = exec.Command("kubectl", "get", "pods", "-n", "aitrigram-system", "-o", "wide")
+		if out, err := utils.Run(cmd); err == nil {
+			diag += "--- Pods ---\n" + out + "\n"
+		}
+		cmd = exec.Command("kubectl", "describe", "pods", "-n", "aitrigram-system",
+			"-l", "control-plane=controller-manager")
+		if out, err := utils.Run(cmd); err == nil {
+			diag += "--- Pod Describe ---\n" + out + "\n"
+		}
+		cmd = exec.Command("kubectl", "logs", "-n", "aitrigram-system",
+			"-l", "control-plane=controller-manager", "--tail=50")
+		if out, err := utils.Run(cmd); err == nil {
+			diag += "--- Pod Logs ---\n" + out + "\n"
+		}
+		cmd = exec.Command("kubectl", "get", "events", "-n", "aitrigram-system",
+			"--sort-by=.lastTimestamp")
+		if out, err := utils.Run(cmd); err == nil {
+			diag += "--- Events ---\n" + out + "\n"
+		}
+		return diag
+	})
 })
 
 var _ = AfterSuite(func() {
