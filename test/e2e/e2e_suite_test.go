@@ -88,6 +88,8 @@ func dumpClusterState(report SpecReport) {
 
 		// --- Workloads ---
 		runDumpCmd(prefix+" Deployments", "kubectl", "get", "deployments", "-n", ns, "-o", "wide")
+		runDumpCmd(prefix+" LLMEngine Deployments (yaml)", "kubectl", "get", "deployments", "-n", ns,
+			"-l", "engine-type", "-o", "yaml")
 		runDumpCmd(prefix+" Pods", "kubectl", "get", "pods", "-n", ns, "-o", "wide")
 		runDumpCmd(prefix+" Jobs", "kubectl", "get", "jobs", "-n", ns, "-o", "wide")
 		runDumpCmd(prefix+" Services", "kubectl", "get", "services", "-n", ns, "-o", "wide")
