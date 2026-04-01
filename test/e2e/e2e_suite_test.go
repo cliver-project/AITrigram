@@ -190,15 +190,10 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
 
-	By("building the controller docker image")
-	cmd = exec.Command("make", "docker-build", "IMG="+controllerIMG)
+	By("building the controller image inside minikube")
+	cmd = exec.Command("minikube", "image", "build", "-t", controllerIMG, ".")
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
-
-	By("loading the controller image into minikube")
-	cmd = exec.Command("minikube", "image", "load", controllerIMG)
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
 
 	// Undeploy any existing controller to avoid stale pods blocking the rollout
 	By("removing existing controller deployment")
