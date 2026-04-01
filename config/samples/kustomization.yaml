@@ -1,8 +1,6 @@
 ## Append samples of your project ##
 resources:
+- aitrigram_v1_modelrepository.yaml
 - aitrigram_v1_llmengine.yaml
 - aitrigram_v1_llmengine_vllm.yaml
-- aitrigram_v1_llmengine_vllm_shared.yaml
-- aitrigram_v1_llmengine_vllm_preloaded.yaml
-- aitrigram_v1_modelrepository.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

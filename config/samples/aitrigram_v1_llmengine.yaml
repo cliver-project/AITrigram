@@ -6,9 +6,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: ollama-engine
 spec:
-  # the docker image for this LLMEngine
-  engineType: "ollama"
-  replicas: 2
-  models:
-    - name: "gemma3-1b-with-cpu"
-      nameInEngine: "gemma3:1b"
+  engineType: ollama
+  modelRefs:
+    - name: gemma3-1b
+  replicas: 1
+  servicePort: 11434

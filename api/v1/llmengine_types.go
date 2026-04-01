@@ -19,6 +19,9 @@ limitations under the License.
 package v1
 
 import (
+	"encoding/json"
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -62,6 +65,28 @@ type ModelReference struct {
 	// +optional
 	// +kubebuilder:default="Manual"
 	UpdatePolicy RevisionUpdatePolicy `json:"updatePolicy,omitempty"`
+}
+
+// UnmarshalJSON handles both the object format {"name":"x"} and the
+// bare-string format "x" so that stale resources on the cluster do not crash
+// the controller's List/Watch.
+func (m *ModelReference) UnmarshalJSON(data []byte) error {
+	// Try bare string first
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		m.Name = name
+		m.UpdatePolicy = RevisionUpdatePolicyManual
+		return nil
+	}
+
+	// Standard object format
+	type plain ModelReference // avoid infinite recursion
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return fmt.Errorf("modelRef must be an object {\"name\":\"...\"} or a string: %w", err)
+	}
+	*m = ModelReference(p)
+	return nil
 }
 
 // GPUConfig defines GPU resource configuration for LLMEngine
