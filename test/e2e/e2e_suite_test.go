@@ -20,6 +20,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -31,7 +32,13 @@ import (
 	"github.com/cliver-project/AITrigram/test/utils"
 )
 
+const defaultControllerIMG = "ghcr.io/cliver-project/aitrigram-controller:latest"
+
 var (
+	// controllerIMG is the image used for the controller deployment.
+	// Override via E2E_CONTROLLER_IMG env var.
+	controllerIMG string
+
 	// Track if any test failed during the suite
 	suiteHadFailures = false
 )
@@ -151,48 +158,49 @@ func dumpNonRunningPodDescriptions(ns string) {
 }
 
 var _ = BeforeSuite(func() {
-	// Check if CRDs are already installed
-	By("checking if CRDs are already installed")
-	cmd := exec.Command("kubectl", "get", "crd", "modelrepositories.aitrigram.cliver-project.github.io")
+	// Resolve controller image: env var override or default
+	controllerIMG = os.Getenv("E2E_CONTROLLER_IMG")
+	if controllerIMG == "" {
+		controllerIMG = defaultControllerIMG
+	}
+	_, _ = fmt.Fprintf(GinkgoWriter, "Using controller image: %s\n", controllerIMG)
+
+	// Always install CRDs to ensure they match the current code.
+	// Skipping on "already exists" risks running tests against stale schemas.
+	By("installing CRDs to the cluster")
+	cmd := exec.Command("make", "install")
 	_, err := utils.Run(cmd)
-	crdsInstalled := (err == nil)
-	if crdsInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "CRDs already installed, skipping installation\n")
-	} else {
-		By("installing CRDs to the cluster")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-	// Check if controller is already deployed
-	By("checking if controller is already deployed")
-	cmd = exec.Command("kubectl", "get", "deployment", "aitrigram-controller-manager", "-n", "aitrigram-system")
+	// Remove any cached controller image from minikube so that the freshly
+	// built image is always used (imagePullPolicy is IfNotPresent).
+	By("removing stale controller image from minikube")
+	cmd = exec.Command("minikube", "image", "rm", controllerIMG)
+	output, _ := utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Image cleanup: %s\n", output)
+
+	// Always build and deploy the controller to ensure the binary matches
+	// the current code. A stale controller causes unmarshal errors when
+	// Go types and CRD schemas diverge.
+	By("building the controller binary")
+	cmd = exec.Command("make", "build")
 	_, err = utils.Run(cmd)
-	controllerDeployed := (err == nil)
-	if controllerDeployed {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Controller already deployed, skipping deployment\n")
-	} else {
-		By("building the controller binary")
-		cmd = exec.Command("make", "build")
-		_, err = utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
 
-		By("building the controller docker image")
-		cmd = exec.Command("make", "docker-build", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
-		_, err = utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
+	By("building the controller docker image")
+	cmd = exec.Command("make", "docker-build", "IMG="+controllerIMG)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
 
-		By("loading the controller image into minikube")
-		cmd = exec.Command("minikube", "image", "load", "ghcr.io/cliver-project/aitrigram-controller:latest")
-		_, err = utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
+	By("loading the controller image into minikube")
+	cmd = exec.Command("minikube", "image", "load", controllerIMG)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
 
-		By("deploying the controller to the cluster")
-		cmd = exec.Command("make", "deploy", "IMG=ghcr.io/cliver-project/aitrigram-controller:latest")
-		_, err = utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller")
-	}
+	By("deploying the controller to the cluster")
+	cmd = exec.Command("make", "deploy", "IMG="+controllerIMG)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller")
 
 	// Configure namespace PodSecurity settings for E2E tests
 	// This allows privileged pods like NFS server to run in the aitrigram-system namespace
@@ -220,10 +228,13 @@ var _ = AfterSuite(func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "\nAll tests passed.\n")
 	}
 
-	// Note: We intentionally do NOT cleanup controller/CRDs in AfterSuite
-	// This allows tests to run multiple times against the same cluster
-	// and supports production-grade clusters where the controller is managed separately
-	// Users can manually run 'make undeploy' and 'make uninstall' if needed
-	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed. Controller and CRDs remain deployed for reuse.\n")
+	// Remove the controller image from minikube so the next run doesn't
+	// reuse a stale cached image (imagePullPolicy is IfNotPresent).
+	By("removing controller image from minikube cache")
+	cmd := exec.Command("minikube", "image", "rm", controllerIMG)
+	output, _ := utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Image cleanup: %s\n", output)
+
+	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed. Controller and CRDs remain deployed.\n")
 	_, _ = fmt.Fprintf(GinkgoWriter, "To cleanup, run: make undeploy && make uninstall\n")
 })
