@@ -262,13 +262,18 @@ var _ = AfterSuite(func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "\nAll tests passed.\n")
 	}
 
-	// Remove the controller image from minikube so the next run doesn't
-	// reuse a stale cached image (imagePullPolicy is IfNotPresent).
-	By("removing controller image from minikube cache")
-	cmd := exec.Command("minikube", "image", "rm", controllerIMG)
+	// Undeploy the controller first so its container releases the image,
+	// then remove the image from minikube to prevent stale cache hits.
+	By("undeploying controller")
+	cmd := exec.Command("make", "undeploy")
 	output, _ := utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Undeploy: %s\n", output)
+
+	By("removing controller image from minikube cache")
+	cmd = exec.Command("minikube", "image", "rm", controllerIMG)
+	output, _ = utils.Run(cmd)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Image cleanup: %s\n", output)
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed. Controller and CRDs remain deployed.\n")
-	_, _ = fmt.Fprintf(GinkgoWriter, "To cleanup, run: make undeploy && make uninstall\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Test suite completed.\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "To reinstall, run: make deploy\n")
 })
