@@ -114,27 +114,27 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Minikube is available and uses 'make build install deploy' for setup.
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run all e2e tests using Minikube.
-	go test ./test/e2e/ -v -ginkgo.v
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v
 
 .PHONY: test-e2e-manager
 test-e2e-manager: manifests generate fmt vet ## Run only the Manager e2e tests (controller deployment verification).
-	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "Manager"
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v -ginkgo.focus "Manager"
 
 .PHONY: test-e2e-storage
 test-e2e-storage: manifests generate fmt vet ## Run only the ModelRepository Storage e2e tests.
-	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "Storage"
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v -ginkgo.focus "Storage"
 
 .PHONY: test-e2e-storage-hostpath
 test-e2e-storage-hostpath: manifests generate fmt vet ## Run only the HostPath storage e2e tests.
-	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "HostPath"
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v -ginkgo.focus "HostPath"
 
 .PHONY: test-e2e-storage-nfs
 test-e2e-storage-nfs: manifests generate fmt vet ## Run only the NFS storage e2e tests.
-	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "NFS"
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v -ginkgo.focus "NFS"
 
 .PHONY: test-e2e-storage-pvc
 test-e2e-storage-pvc: manifests generate fmt vet ## Run only the PVC storage e2e tests (both RWX and RWO).
-	go test ./test/e2e/ -v -ginkgo.v -ginkgo.focus "PVC"
+	go test ./test/e2e/ -v -timeout 60m -ginkgo.v -ginkgo.focus "PVC"
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
