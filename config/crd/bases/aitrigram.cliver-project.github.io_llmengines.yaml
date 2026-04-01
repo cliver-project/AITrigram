@@ -323,7 +323,12 @@ spec:
                   properties:
                     name:
                       description: Name of the ModelRepository
+                      maxLength: 40
                       type: string
+                      x-kubernetes-validations:
+                      - message: modelRef name must be 40 characters or fewer to avoid
+                          Kubernetes resource name length limits
+                        rule: size(self) <= 40
                     revision:
                       description: |-
                         Revision specifies which revision to use

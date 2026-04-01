@@ -177,31 +177,28 @@ var _ = BeforeSuite(func() {
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-	// Remove any cached controller image from minikube so that the freshly
-	// built image is always used (imagePullPolicy is IfNotPresent).
-	By("removing stale controller image from minikube")
-	cmd = exec.Command("minikube", "image", "rm", controllerIMG)
-	output, _ := utils.Run(cmd)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Image cleanup: %s\n", output)
-
 	// Always build and deploy the controller to ensure the binary matches
 	// the current code. A stale controller causes unmarshal errors when
 	// Go types and CRD schemas diverge.
-	By("building the controller binary")
-	cmd = exec.Command("make", "build")
+	By("building the controller binary and docker image")
+	cmd = exec.Command("make", "build", "docker-build", "IMG="+controllerIMG)
 	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller binary")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller")
 
-	By("building the controller image inside minikube")
-	cmd = exec.Command("minikube", "image", "build", "-t", controllerIMG, ".")
+	By("loading the controller image into minikube")
+	cmd = exec.Command("sh", "-c",
+		"$(command -v docker || command -v podman) save "+controllerIMG+" | minikube image load --overwrite=true -")
 	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller docker image")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
 
-	// Undeploy any existing controller to avoid stale pods blocking the rollout
+	// Delete the existing controller deployment so the new image is picked up.
+	// We avoid make undeploy because it deletes the namespace, which blocks
+	// the subsequent make deploy until the namespace finishes terminating.
 	By("removing existing controller deployment")
-	cmd = exec.Command("make", "undeploy")
-	output, _ = utils.Run(cmd)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Undeploy: %s\n", output)
+	cmd = exec.Command("kubectl", "delete", "deployment", "aitrigram-controller-manager",
+		"-n", "aitrigram-system", "--ignore-not-found")
+	output, _ := utils.Run(cmd)
+	_, _ = fmt.Fprintf(GinkgoWriter, "Deployment cleanup: %s\n", output)
 
 	By("deploying the controller to the cluster")
 	cmd = exec.Command("make", "deploy", "IMG="+controllerIMG)

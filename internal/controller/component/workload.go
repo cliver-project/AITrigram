@@ -2,17 +2,22 @@ package component
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/cliver-project/AITrigram/internal/controller/assets"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// FieldManager is the server-side apply field manager name used for all
+// resources created or updated by the aitrigram controller. Exported so
+// that other packages (e.g. storage) can use the same identity.
+const FieldManager = "aitrigram-controller"
 
 // llmEngineWorkload implements LLMEngineComponent.
 // It manages Deployment and Service resources for an LLMEngine+ModelRepository pair.
@@ -97,8 +102,9 @@ func (w *llmEngineWorkload) reconcileDeployment(ctx LLMEngineContext) error {
 		return fmt.Errorf("failed to set owner reference for deployment %s: %w", w.name, err)
 	}
 
-	// Create or update deployment
-	if err := w.applyObject(ctx, deployment); err != nil {
+	// Server-side apply — only the fields we set are owned and updated.
+	// Kubernetes-added defaults are left untouched, preventing churn.
+	if err := serverSideApply(ctx, deployment); err != nil {
 		return fmt.Errorf("failed to apply deployment for %s: %w", w.name, err)
 	}
 
@@ -134,8 +140,8 @@ func (w *llmEngineWorkload) reconcileService(ctx LLMEngineContext) error {
 		return fmt.Errorf("failed to set owner reference for service %s: %w", w.name, err)
 	}
 
-	// Create or update service
-	if err := w.applyObject(ctx, service); err != nil {
+	// Server-side apply
+	if err := serverSideApply(ctx, service); err != nil {
 		return fmt.Errorf("failed to apply service for %s: %w", w.name, err)
 	}
 
@@ -180,8 +186,8 @@ func (w *llmEngineWorkload) reconcileManifests(ctx LLMEngineContext) error {
 			return fmt.Errorf("failed to set owner reference for manifest %s: %w", manifestName, err)
 		}
 
-		// Create or update the manifest
-		if err := w.applyObject(ctx, manifest); err != nil {
+		// Server-side apply
+		if err := serverSideApply(ctx, manifest); err != nil {
 			return fmt.Errorf("failed to apply manifest %s: %w", manifestName, err)
 		}
 
@@ -191,88 +197,38 @@ func (w *llmEngineWorkload) reconcileManifests(ctx LLMEngineContext) error {
 	return nil
 }
 
-// applyObject creates or updates a generic Kubernetes object.
-// This follows the pattern from Hypershift's resource application, handling any client.Object type.
-func (w *llmEngineWorkload) applyObject(ctx LLMEngineContext, obj client.Object) error {
-	// Create a new instance of the same type for fetching existing resource
-	existing := obj.DeepCopyObject().(client.Object)
-
-	err := ctx.Client.Get(ctx, types.NamespacedName{
-		Name:      obj.GetName(),
-		Namespace: obj.GetNamespace(),
-	}, existing)
-
+// serverSideApply applies the object using the client.Apply() API.
+// Only the fields we set are owned by the field manager; Kubernetes-added
+// defaults are left untouched. This eliminates churn from defaulted fields.
+func serverSideApply(ctx LLMEngineContext, obj client.Object) error {
+	// Convert typed object to unstructured for ApplyConfiguration
+	u, err := toUnstructured(ctx.Scheme, obj)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new object
-			return ctx.Client.Create(ctx, obj)
-		}
-		return err
+		return fmt.Errorf("failed to convert %T to unstructured: %w", obj, err)
 	}
 
-	// Update existing object — only if something actually changed
-	needsUpdate := false
+	ac := client.ApplyConfigurationFromUnstructured(u)
+	return ctx.Client.Apply(ctx, ac,
+		client.FieldOwner(FieldManager),
+		client.ForceOwnership,
+	)
+}
 
-	// Check labels and annotations
-	if !reflect.DeepEqual(existing.GetLabels(), obj.GetLabels()) {
-		existing.SetLabels(obj.GetLabels())
-		needsUpdate = true
+// toUnstructured converts a typed client.Object to *unstructured.Unstructured.
+func toUnstructured(scheme *runtime.Scheme, obj client.Object) (*unstructured.Unstructured, error) {
+	// Ensure GVK is set
+	gvks, _, err := scheme.ObjectKinds(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get GVK for %T: %w", obj, err)
 	}
-	if !reflect.DeepEqual(existing.GetAnnotations(), obj.GetAnnotations()) {
-		existing.SetAnnotations(obj.GetAnnotations())
-		needsUpdate = true
+	obj.GetObjectKind().SetGroupVersionKind(gvks[0])
+
+	data, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return nil, err
 	}
-
-	// Type-specific updates for known types
-	switch typedObj := obj.(type) {
-	case *corev1.ConfigMap:
-		existingCM := existing.(*corev1.ConfigMap)
-		if !reflect.DeepEqual(existingCM.Data, typedObj.Data) || !reflect.DeepEqual(existingCM.BinaryData, typedObj.BinaryData) {
-			existingCM.Data = typedObj.Data
-			existingCM.BinaryData = typedObj.BinaryData
-			needsUpdate = true
-		}
-
-	case *corev1.Secret:
-		existingSecret := existing.(*corev1.Secret)
-		if !reflect.DeepEqual(existingSecret.Data, typedObj.Data) || existingSecret.Type != typedObj.Type {
-			existingSecret.Data = typedObj.Data
-			existingSecret.Type = typedObj.Type
-			needsUpdate = true
-		}
-
-	case *appsv1.Deployment:
-		existingDeployment := existing.(*appsv1.Deployment)
-		// Only compare mutable fields — never touch Selector (immutable after creation)
-		if !reflect.DeepEqual(existingDeployment.Spec.Replicas, typedObj.Spec.Replicas) ||
-			!reflect.DeepEqual(existingDeployment.Spec.Template, typedObj.Spec.Template) ||
-			!reflect.DeepEqual(existingDeployment.Spec.Strategy, typedObj.Spec.Strategy) {
-			existingDeployment.Spec.Replicas = typedObj.Spec.Replicas
-			existingDeployment.Spec.Template = typedObj.Spec.Template
-			existingDeployment.Spec.Strategy = typedObj.Spec.Strategy
-			needsUpdate = true
-		}
-
-	case *corev1.Service:
-		existingService := existing.(*corev1.Service)
-		// Compare excluding ClusterIP (immutable)
-		desiredSpec := typedObj.Spec.DeepCopy()
-		desiredSpec.ClusterIP = existingService.Spec.ClusterIP
-		if !reflect.DeepEqual(existingService.Spec, *desiredSpec) {
-			clusterIP := existingService.Spec.ClusterIP
-			existingService.Spec = typedObj.Spec
-			existingService.Spec.ClusterIP = clusterIP
-			needsUpdate = true
-		}
-
-	default:
-		return ctx.Client.Update(ctx, obj)
-	}
-
-	if !needsUpdate {
-		return nil
-	}
-	return ctx.Client.Update(ctx, existing)
+	u := &unstructured.Unstructured{Object: data}
+	return u, nil
 }
 
 // deleteResources deletes all component resources.

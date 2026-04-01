@@ -11,7 +11,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: llmengines.aitrigram.cliver-project.github.io
 spec:
   group: aitrigram.cliver-project.github.io
@@ -60,37 +60,12 @@ spec:
             description: LLMEngineSpec defines the desired state of LLMEngine.
             properties:
               args:
-                description: Args specifies arguments to start the engine container.
+                description: |-
+                  Args specifies arguments to start the engine container.
+                  There will be some default arguments set based on engineType, this will override the defaults.
                 items:
                   type: string
                 type: array
-              cache:
-                description: Cache specifies the storage configuration for the k-v
-                  cache
-                properties:
-                  mountPath:
-                    default: /data/models
-                    description: |-
-                      MountPath is the path where models will be stored/mounted inside containers
-                      Defaults to /data/models if not specified
-                    type: string
-                  size:
-                    description: Size of the storage volume (e.g., "50Gi", "100Gi")
-                    type: string
-                  storageClass:
-                    default: auto
-                    description: |-
-                      StorageClass specifies the type of storage to use
-                      Options:
-                        - "auto" (default): Controller auto-detects best available storage
-                        - "nfs": Use NFS-based storage class
-                        - "hostpath": Use node-local HostPath storage
-                        - "<custom-name>": Use specific Kubernetes StorageClass by name
-                    minLength: 1
-                    type: string
-                required:
-                - size
-                type: object
               engineType:
                 default: vllm
                 description: EngineType specifies the type of LLM engine (e.g., ollama,
@@ -100,13 +75,17 @@ spec:
                 - vllm
                 type: string
               env:
-                description: Env specifies environment variables for the engine container.
+                description: |-
+                  Env specifies environment variables for the engine container.
+                  There will be some default environment variables set based on engineType, which will be merged with these. This takes precedence.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
                   properties:
                     name:
-                      description: Name of the environment variable. Must be a C_IDENTIFIER.
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
                       type: string
                     value:
                       description: |-
@@ -162,6 +141,43 @@ spec:
                               type: string
                           required:
                           - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
                           type: object
                           x-kubernetes-map-type: atomic
                         resourceFieldRef:
@@ -230,7 +246,7 @@ spec:
                     minimum: 1
                     type: integer
                   enabled:
-                    default: false
+                    default: true
                     description: |-
                       Enabled indicates whether GPU support is enabled
                       When enabled, the deployment will request GPU resources and target GPU nodes
@@ -265,9 +281,10 @@ spec:
                         operator:
                           description: |-
                             Operator represents a key's relationship to the value.
-                            Valid operators are Exists and Equal. Defaults to Equal.
+                            Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
                             Exists is equivalent to wildcard for value, so that a pod can
                             tolerate all taints of a particular category.
+                            Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                           type: string
                         tolerationSeconds:
                           description: |-
@@ -306,15 +323,20 @@ spec:
               modelRefs:
                 description: |-
                   ModelRefs lists the ModelRepositories that this engine will serve
-                  Each reference can optionally specify a specific revision
-                  For backward compatibility, if a string is provided, it's treated as a ModelReference with just the name
+                  Each reference can specify a specific revision
+                  For each ModelRef, a separate Deployment will be created
                 items:
                   description: ModelReference references a ModelRepository with optional
                     revision
                   properties:
                     name:
                       description: Name of the ModelRepository
+                      maxLength: 40
                       type: string
+                      x-kubernetes-validations:
+                      - message: modelRef name must be 40 characters or fewer to avoid
+                          Kubernetes resource name length limits
+                        rule: size(self) <= 40
                     revision:
                       description: |-
                         Revision specifies which revision to use
@@ -358,6 +380,67 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              resources:
+                description: |-
+                  Resources specifies CPU and memory resource requirements for the engine container
+                  Overrides the default resource requests/limits from the engine template
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
               servicePort:
                 description: ServicePort specifies the port for the ClusterIP Service
                   managed by this engine.
@@ -461,7 +544,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.2
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: modelrepositories.aitrigram.cliver-project.github.io
 spec:
   group: aitrigram.cliver-project.github.io
@@ -508,7 +591,8 @@ spec:
                 description: |-
                   DeleteScripts specifies custom scripts to run for deleting the model when the ModelRepository is deleted
                   If not specified, default scripts will be used based on the source origin
-                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+
+                  It supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
                   Can be either bash or Python script (auto-detected)
                 type: string
               downloadImage:
@@ -520,7 +604,8 @@ spec:
                 description: |-
                   DownloadScripts specifies custom scripts to run for downloading the model
                   If not specified, default scripts will be used based on the source origin
-                  Supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
+
+                  It supports Jinja2 template variables: {{ ModelId }}, {{ ModelName }}, {{ MountPath }}
                   Can be either bash or Python script (auto-detected)
                 type: string
               modelName:
@@ -533,91 +618,8 @@ spec:
                   type: string
                 description: |-
                   NodeSelector specifies node selector requirements for scheduling download and cleanup jobs
-                  This is particularly important when using HostPath storage to ensure jobs run on the correct node
+                  This is particularly important when using the storages which needs to ensure jobs run on the correct nodes
                   Example: {"kubernetes.io/hostname": "kind-control-plane"}
-                type: object
-              revision:
-                description: |-
-                  Revision specifies the revision management configuration
-                  When not specified, defaults to a single revision based on the model source origin
-                properties:
-                  autoPromote:
-                    description: |-
-                      AutoPromote automatically promotes new downloads to "current"
-                      Only applies when updateStrategy is Automatic
-                    type: boolean
-                  current:
-                    default: main
-                    description: |-
-                      Current is the currently active revision that new LLMEngines will use
-                      Can be a tag, branch, or commit hash
-                      Defaults to "main" for HuggingFace
-                    type: string
-                  revisions:
-                    description: |-
-                      Revisions is a list of revisions to track and maintain
-                      Each revision will be downloaded and stored separately
-                    items:
-                      description: RevisionReference references a specific model revision
-                      properties:
-                        autoUpdate:
-                          description: |-
-                            AutoUpdate tracks this ref and downloads new commits automatically
-                            Useful for tracking "main" or "latest" branches
-                          type: boolean
-                        name:
-                          description: Name is a user-friendly name for this revision
-                            (e.g., "v1.0.0", "stable")
-                          type: string
-                        promoted:
-                          description: |-
-                            Promoted indicates this revision is available for LLMEngine use
-                            Unpromoted revisions are downloaded but not yet activated
-                          type: boolean
-                        ref:
-                          description: |-
-                            Ref is the actual reference (tag, branch, or commit hash)
-                            For HuggingFace: git ref
-                            For other sources: version identifier
-                          type: string
-                        retainAfterSuperseded:
-                          default: true
-                          description: |-
-                            RetainAfterSuperseded keeps this revision even after a newer version is promoted
-                            Useful for rollback capability
-                          type: boolean
-                      required:
-                      - name
-                      - ref
-                      type: object
-                    type: array
-                  updateStrategy:
-                    default: Manual
-                    description: UpdateStrategy defines how updates to revisions are
-                      handled
-                    enum:
-                    - Manual
-                    - Automatic
-                    type: string
-                type: object
-              revisionHistory:
-                description: |-
-                  RevisionHistory configures retention policies for old revisions
-                  Only applies when Revision is specified
-                properties:
-                  limit:
-                    default: 3
-                    description: |-
-                      Limit is the maximum number of revisions to keep
-                      Older revisions beyond this limit are garbage collected
-                      0 means unlimited (not recommended for production)
-                    type: integer
-                  retainDays:
-                    default: 30
-                    description: |-
-                      RetainDays is how many days to keep unused revisions
-                      Revisions not referenced by any LLMEngine for this duration are GC'd
-                    type: integer
                 type: object
               source:
                 description: Source defines where to download the model from
@@ -647,9 +649,36 @@ spec:
                     - huggingface
                     - ollama
                     type: string
+                  revision:
+                    description: |-
+                      Revision is the current active revision to download and serve
+                      For HuggingFace: git ref (branch, tag, or commit hash), defaults to "main"
+                      For Ollama: model tag (e.g., "0.5b", "7b"), defaults to "latest"
+                    type: string
+                  revisions:
+                    description: |-
+                      Revisions is a list of additional revisions to track and maintain
+                      Each revision will be downloaded and stored separately alongside the current revision
+                    items:
+                      description: RevisionReference references a specific model revision
+                      properties:
+                        name:
+                          description: Name is a user-friendly name for this revision
+                            (e.g., "v1.0.0", "stable")
+                          type: string
+                        ref:
+                          description: |-
+                            Ref is the actual reference (tag, branch, or commit hash)
+                            For HuggingFace: git ref
+                            For other sources: version identifier
+                          type: string
+                      required:
+                      - name
+                      - ref
+                      type: object
+                    type: array
                 required:
                 - modelId
-                - origin
                 type: object
               storage:
                 description: |-
@@ -661,85 +690,33 @@ spec:
                     description: |-
                       MountPath is the path where models will be stored/mounted inside containers
                       Defaults to /data/models if not specified
+                      The data of this Model is normally under this path
                     type: string
                   size:
+                    default: 10Gi
                     description: Size of the storage volume (e.g., "50Gi", "100Gi")
                     type: string
                   storageClass:
                     default: auto
                     description: |-
-                      StorageClass specifies the type of storage to use
+                      StorageClass specifies which Kubernetes StorageClass to use for the PVC
                       Options:
-                        - "auto" (default): Controller auto-detects best available storage
-                        - "nfs": Use NFS-based storage class
-                        - "hostpath": Use node-local HostPath storage
-                        - "<custom-name>": Use specific Kubernetes StorageClass by name
-                    minLength: 1
+                        - "auto" (default): Auto-detect the best available StorageClass (prefers RWX, then default SC, then RWO)
+                        - "<storageclass-name>": Use a specific Kubernetes StorageClass by name (e.g., "longhorn", "nfs-client", "standard")
+                      The controller creates a PVC with the appropriate access mode (RWX or RWO) based on the StorageClass provisioner.
                     type: string
-                required:
-                - size
                 type: object
             required:
-            - autoDownload
             - source
             - storage
             type: object
           status:
             description: ModelRepositoryStatus defines the observed state of ModelRepository
             properties:
-              activeRevision:
-                description: |-
-                  ActiveRevision is the currently active revision
-                  Only populated when spec.revision is specified
-                properties:
-                  commitHash:
-                    description: CommitHash is the immutable reference (git commit
-                      for HF)
-                    type: string
-                  downloadedAt:
-                    description: DownloadedAt is when this revision was first downloaded
-                    format: date-time
-                    type: string
-                  metadata:
-                    additionalProperties:
-                      type: string
-                    description: Metadata contains additional revision info
-                    type: object
-                  name:
-                    description: Name is the user-friendly name
-                    type: string
-                  path:
-                    description: Path is the storage path for this revision
-                    type: string
-                  progress:
-                    description: Progress is download/preparation progress (0-100)
-                    type: integer
-                  size:
-                    description: Size is the total size of model files for this revision
-                    type: string
-                  status:
-                    description: Status is the current status of this revision
-                    enum:
-                    - Pending
-                    - Downloading
-                    - Ready
-                    - Failed
-                    - Deprecated
-                    type: string
-                  usedBy:
-                    description: UsedBy lists LLMEngines currently using this revision
-                    items:
-                      type: string
-                    type: array
-                required:
-                - commitHash
-                - name
-                - status
-                type: object
               availableRevisions:
                 description: |-
                   AvailableRevisions lists all downloaded and available revisions
-                  Only populated when spec.revision is specified
+                  Only populated when spec.source.revisions is specified
                 items:
                   description: RevisionStatus describes a specific revision's state
                   properties:
@@ -747,27 +724,8 @@ spec:
                       description: CommitHash is the immutable reference (git commit
                         for HF)
                       type: string
-                    downloadedAt:
-                      description: DownloadedAt is when this revision was first downloaded
-                      format: date-time
-                      type: string
-                    metadata:
-                      additionalProperties:
-                        type: string
-                      description: Metadata contains additional revision info
-                      type: object
                     name:
                       description: Name is the user-friendly name
-                      type: string
-                    path:
-                      description: Path is the storage path for this revision
-                      type: string
-                    progress:
-                      description: Progress is download/preparation progress (0-100)
-                      type: integer
-                    size:
-                      description: Size is the total size of model files for this
-                        revision
                       type: string
                     status:
                       description: Status is the current status of this revision
@@ -778,13 +736,7 @@ spec:
                       - Failed
                       - Deprecated
                       type: string
-                    usedBy:
-                      description: UsedBy lists LLMEngines currently using this revision
-                      items:
-                        type: string
-                      type: array
                   required:
-                  - commitHash
                   - name
                   - status
                   type: object
@@ -864,39 +816,6 @@ spec:
                 - Failed
                 - Deprecated
                 type: string
-              reason:
-                description: Reason provides the reason for the current phase
-                type: string
-              revisionHistory:
-                description: |-
-                  RevisionHistory tracks revision changes over time
-                  Only populated when spec.revision is specified
-                items:
-                  description: RevisionHistoryEntry records a revision change event
-                  properties:
-                    previousRevision:
-                      description: PreviousRevision before this change
-                      type: string
-                    reason:
-                      description: Reason for the change
-                      type: string
-                    revision:
-                      description: Revision that was activated
-                      type: string
-                    timestamp:
-                      description: Timestamp of the change
-                      format: date-time
-                      type: string
-                    triggeredBy:
-                      description: TriggeredBy indicates who/what triggered the change
-                      type: string
-                  required:
-                  - reason
-                  - revision
-                  - timestamp
-                  - triggeredBy
-                  type: object
-                type: array
               storage:
                 description: |-
                   Storage contains detailed information about provisioned storage
@@ -923,14 +842,13 @@ spec:
                             For CephFS: "monitors", "path"
                         type: object
                       type:
-                        description: Type is the backend storage type (e.g., "pvc",
-                          "nfs", "hostpath", "cephfs")
+                        description: Type is the actual backend storage type detected
+                          from the PV (e.g., "nfs", "cephfs", "longhorn", "csi", "ebs")
                         type: string
                     type: object
                   boundNodeName:
-                    description: |-
-                      BoundNodeName for node-bound storage (HostPath, RWO PVCs)
-                      Workloads must be scheduled to this node
+                    description: BoundNodeName for node-bound storage (HostPath, RWO
+                      PVCs)
                     type: string
                   capacity:
                     description: Capacity is the total storage capacity
@@ -938,9 +856,6 @@ spec:
                   storageClass:
                     description: StorageClass is the actual storage class used (nfs,
                       hostpath, custom name)
-                    type: string
-                  used:
-                    description: Used is the currently used storage
                     type: string
                   volumeMode:
                     default: Filesystem
@@ -1083,6 +998,20 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - persistentvolumeclaims
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - create
@@ -1100,14 +1029,12 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - persistentvolumeclaims
-  - services
+  - persistentvolumes
   verbs:
   - create
   - delete
   - get
   - list
-  - patch
   - update
   - watch
 - apiGroups:
@@ -1162,6 +1089,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
   - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1

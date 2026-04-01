@@ -27,6 +27,7 @@ go.work
 *.backup
 demo*
 
+config/_overlay/
 __debug*
 TODO.md
 dev.md

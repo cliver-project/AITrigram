@@ -190,11 +190,21 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm aitrigram-olm-builder
 	rm Dockerfile.cross
 
+# kustomize-with-image creates a temporary overlay that sets the controller image
+# without modifying any checked-in files, builds it, and cleans up.
+# Usage: $(call kustomize-with-image,<base-dir>,<output-command>)
+#   <base-dir> is relative to config/, e.g. "default" or "manifests"
+define kustomize-with-image
+	@mkdir -p config/_overlay
+	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../$(1)\nimages:\n- name: controller\n  newName: $(firstword $(subst :, ,$(IMG)))\n  newTag: $(lastword $(subst :, ,$(IMG)))\n' > config/_overlay/kustomization.yaml
+	$(KUSTOMIZE) build config/_overlay $(2)
+	@rm -rf config/_overlay
+endef
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
+	$(call kustomize-with-image,default,> dist/install.yaml)
 
 ##@ Deployment
 
@@ -212,9 +222,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
-	cd config/manager && $(KUSTOMIZE) edit set image controller=controller:latest
+	$(call kustomize-with-image,default,| $(KUBECTL) apply -f -)
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -308,8 +316,7 @@ endif
 .PHONY: bundle
 bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metadata, then validate generated files.
 	$(OPERATOR_SDK) generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
+	$(call kustomize-with-image,manifests,| $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS))
 	$(OPERATOR_SDK) bundle validate ./bundle
 
 .PHONY: bundle-build

@@ -53,6 +53,8 @@ const (
 type ModelReference struct {
 	// Name of the ModelRepository
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:XValidation:rule="size(self) <= 40",message="modelRef name must be 40 characters or fewer to avoid Kubernetes resource name length limits"
 	Name string `json:"name"`
 
 	// Revision specifies which revision to use

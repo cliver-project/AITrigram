@@ -16,13 +16,13 @@ metadata:
           },
           "spec": {
             "engineType": "ollama",
-            "models": [
+            "modelRefs": [
               {
-                "name": "gemma3-1b-with-cpu",
-                "nameInEngine": "gemma3:1b"
+                "name": "gemma3-1b"
               }
             ],
-            "replicas": 2
+            "replicas": 1,
+            "servicePort": 11434
           }
         },
         {
@@ -37,147 +37,20 @@ metadata:
           },
           "spec": {
             "engineType": "vllm",
+            "gpu": {
+              "count": 1,
+              "enabled": true,
+              "type": "nvidia.com/gpu"
+            },
             "image": "vllm/vllm-openai:latest",
-            "modelDeploymentTemplate": {
-              "args": [
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8000"
-              ],
-              "downloadImage": "vllm/vllm-openai:latest",
-              "downloadScripts": "mkdir -p {{ .ModelDir }} \u0026\u0026 cd {{ .ModelDir }} \u0026\u0026 wget -q -O model.zip \"{{ .ModelUrl }}\" \u0026\u0026 unzip -q model.zip \u0026\u0026 rm model.zip",
-              "env": [
-                {
-                  "name": "VLLM_MODEL",
-                  "value": "/data/models/{{ .ModelName }}"
-                }
-              ],
-              "storage": {
-                "cacheStorage": {
-                  "emptyDir": {
-                    "sizeLimit": "10Gi"
-                  },
-                  "path": "/tmp"
-                },
-                "modelsStorage": {
-                  "emptyDir": {},
-                  "path": "/data/models"
-                }
+            "modelRefs": [
+              {
+                "name": "llama3-7b"
               }
-            },
+            ],
             "port": 8000,
-            "servicePort": 8080
-          }
-        },
-        {
-          "apiVersion": "aitrigram.cliver-project.github.io/v1",
-          "kind": "LLMEngine",
-          "metadata": {
-            "labels": {
-              "app.kubernetes.io/managed-by": "kustomize",
-              "app.kubernetes.io/name": "aitrigram"
-            },
-            "name": "vllm-engine-preloaded-models"
-          },
-          "spec": {
-            "engineType": "vllm",
-            "image": "vllm/vllm-openai:latest",
-            "modelDeploymentTemplate": {
-              "args": [
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8000"
-              ],
-              "env": [
-                {
-                  "name": "HF_HOME",
-                  "value": "/data/models"
-                },
-                {
-                  "name": "HUGGING_FACE_HUB_TOKEN",
-                  "valueFrom": {
-                    "secretKeyRef": {
-                      "key": "token",
-                      "name": "huggingface-secret"
-                    }
-                  }
-                }
-              ],
-              "storage": {
-                "cacheStorage": {
-                  "emptyDir": {
-                    "sizeLimit": "10Gi"
-                  },
-                  "path": "/tmp"
-                },
-                "modelsStorage": {
-                  "path": "/data/models",
-                  "persistentVolumeClaim": {
-                    "claimName": "preloaded-models-pvc"
-                  }
-                }
-              }
-            },
-            "port": 8000,
-            "servicePort": 8080
-          }
-        },
-        {
-          "apiVersion": "aitrigram.cliver-project.github.io/v1",
-          "kind": "LLMEngine",
-          "metadata": {
-            "labels": {
-              "app.kubernetes.io/managed-by": "kustomize",
-              "app.kubernetes.io/name": "aitrigram"
-            },
-            "name": "vllm-engine-shared-models"
-          },
-          "spec": {
-            "engineType": "vllm",
-            "image": "vllm/vllm-openai:latest",
-            "modelDeploymentTemplate": {
-              "args": [
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8000"
-              ],
-              "downloadImage": "vllm/vllm-openai:latest",
-              "downloadScripts": "mkdir -p {{ .ModelDir }} \u0026\u0026\ncd {{ .ModelDir }} \u0026\u0026\npython -c \"from huggingface_hub import snapshot_download; snapshot_download('{{ .ModelName }}', cache_dir='{{ .ModelDir }}', token=os.getenv('HUGGING_FACE_HUB_TOKEN'))\"\n",
-              "env": [
-                {
-                  "name": "HF_HOME",
-                  "value": "/data/models"
-                },
-                {
-                  "name": "HUGGING_FACE_HUB_TOKEN",
-                  "valueFrom": {
-                    "secretKeyRef": {
-                      "key": "token",
-                      "name": "huggingface-secret"
-                    }
-                  }
-                }
-              ],
-              "storage": {
-                "cacheStorage": {
-                  "emptyDir": {
-                    "sizeLimit": "10Gi"
-                  },
-                  "path": "/tmp"
-                },
-                "modelsStorage": {
-                  "path": "/data/models",
-                  "persistentVolumeClaim": {
-                    "claimName": "shared-models-pvc"
-                  }
-                }
-              }
-            },
-            "port": 8000,
-            "servicePort": 8080
+            "replicas": 1,
+            "servicePort": 8000
           }
         },
         {
@@ -203,7 +76,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2026-03-30T13:22:37Z"
+    createdAt: "2026-04-01T13:45:50Z"
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: aitrigram.v0.0.1

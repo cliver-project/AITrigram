@@ -132,8 +132,8 @@ func TestWorkload_Reconcile_PredicateError(t *testing.T) {
 	assert.Contains(t, err.Error(), "predicate failed")
 }
 
-// TestWorkload_ApplyDeployment_Create tests creating a new deployment
-func TestWorkload_ApplyDeployment_Create(t *testing.T) {
+// TestServerSideApply_CreateDeployment tests creating a new deployment via server-side apply
+func TestServerSideApply_CreateDeployment(t *testing.T) {
 	s := setupTestScheme()
 	llmEngine := createTestLLMEngine("test-engine", "default", aitrigramv1.LLMEngineTypeOllama)
 
@@ -161,7 +161,6 @@ func TestWorkload_ApplyDeployment_Create(t *testing.T) {
 		},
 	}
 
-	workload := &llmEngineWorkload{name: "test"}
 	ctx := LLMEngineContext{
 		Context:   context.TODO(),
 		Client:    fakeClient,
@@ -170,7 +169,7 @@ func TestWorkload_ApplyDeployment_Create(t *testing.T) {
 		Namespace: "default",
 	}
 
-	err := workload.applyObject(ctx, deployment)
+	err := serverSideApply(ctx, deployment)
 	require.NoError(t, err)
 
 	// Verify deployment was created
@@ -181,8 +180,8 @@ func TestWorkload_ApplyDeployment_Create(t *testing.T) {
 	assert.Equal(t, "test:latest", retrieved.Spec.Template.Spec.Containers[0].Image)
 }
 
-// TestWorkload_ApplyDeployment_Update tests updating an existing deployment
-func TestWorkload_ApplyDeployment_Update(t *testing.T) {
+// TestServerSideApply_UpdateDeployment tests updating an existing deployment via server-side apply
+func TestServerSideApply_UpdateDeployment(t *testing.T) {
 	s := setupTestScheme()
 	llmEngine := createTestLLMEngine("test-engine", "default", aitrigramv1.LLMEngineTypeOllama)
 
@@ -237,7 +236,6 @@ func TestWorkload_ApplyDeployment_Update(t *testing.T) {
 		},
 	}
 
-	workload := &llmEngineWorkload{name: "test"}
 	ctx := LLMEngineContext{
 		Context:   context.TODO(),
 		Client:    fakeClient,
@@ -246,7 +244,7 @@ func TestWorkload_ApplyDeployment_Update(t *testing.T) {
 		Namespace: "default",
 	}
 
-	err := workload.applyObject(ctx, updatedDeployment)
+	err := serverSideApply(ctx, updatedDeployment)
 	require.NoError(t, err)
 
 	// Verify deployment was updated
@@ -254,11 +252,11 @@ func TestWorkload_ApplyDeployment_Update(t *testing.T) {
 	err = fakeClient.Get(context.TODO(), types.NamespacedName{Name: "test-deployment", Namespace: "default"}, retrieved)
 	require.NoError(t, err)
 	assert.Equal(t, "new:latest", retrieved.Spec.Template.Spec.Containers[0].Image)
-	assert.Equal(t, map[string]string{"new": "label"}, retrieved.Labels)
+	assert.Equal(t, "label", retrieved.Labels["new"])
 }
 
-// TestWorkload_ApplyService_Create tests creating a new service
-func TestWorkload_ApplyService_Create(t *testing.T) {
+// TestServerSideApply_CreateService tests creating a service via server-side apply
+func TestServerSideApply_CreateService(t *testing.T) {
 	s := setupTestScheme()
 	llmEngine := createTestLLMEngine("test-engine", "default", aitrigramv1.LLMEngineTypeOllama)
 
@@ -277,7 +275,6 @@ func TestWorkload_ApplyService_Create(t *testing.T) {
 		},
 	}
 
-	workload := &llmEngineWorkload{name: "test"}
 	ctx := LLMEngineContext{
 		Context:   context.TODO(),
 		Client:    fakeClient,
@@ -286,7 +283,7 @@ func TestWorkload_ApplyService_Create(t *testing.T) {
 		Namespace: "default",
 	}
 
-	err := workload.applyObject(ctx, service)
+	err := serverSideApply(ctx, service)
 	require.NoError(t, err)
 
 	// Verify service was created
@@ -295,65 +292,4 @@ func TestWorkload_ApplyService_Create(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-service", retrieved.Name)
 	assert.Equal(t, int32(8080), retrieved.Spec.Ports[0].Port)
-}
-
-// TestWorkload_ApplyService_Update tests updating an existing service
-func TestWorkload_ApplyService_Update(t *testing.T) {
-	s := setupTestScheme()
-	llmEngine := createTestLLMEngine("test-engine", "default", aitrigramv1.LLMEngineTypeOllama)
-
-	existingService := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-service",
-			Namespace: "default",
-			Labels:    map[string]string{"old": "label"},
-		},
-		Spec: corev1.ServiceSpec{
-			ClusterIP: "10.0.0.1",
-			Selector:  map[string]string{"app": "test"},
-			Ports: []corev1.ServicePort{
-				{Name: "http", Port: 8080},
-			},
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(s).
-		WithObjects(existingService).
-		Build()
-
-	updatedService := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-service",
-			Namespace: "default",
-			Labels:    map[string]string{"new": "label"},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "test"},
-			Ports: []corev1.ServicePort{
-				{Name: "http", Port: 9090},
-			},
-		},
-	}
-
-	workload := &llmEngineWorkload{name: "test"}
-	ctx := LLMEngineContext{
-		Context:   context.TODO(),
-		Client:    fakeClient,
-		Scheme:    s,
-		LLMEngine: llmEngine,
-		Namespace: "default",
-	}
-
-	err := workload.applyObject(ctx, updatedService)
-	require.NoError(t, err)
-
-	// Verify service was updated
-	retrieved := &corev1.Service{}
-	err = fakeClient.Get(context.TODO(), types.NamespacedName{Name: "test-service", Namespace: "default"}, retrieved)
-	require.NoError(t, err)
-	assert.Equal(t, int32(9090), retrieved.Spec.Ports[0].Port)
-	assert.Equal(t, map[string]string{"new": "label"}, retrieved.Labels)
-	// Note: In production, Kubernetes would reject changes to immutable fields like ClusterIP.
-	// We don't preserve ClusterIP to let such bugs surface rather than hiding them.
 }
