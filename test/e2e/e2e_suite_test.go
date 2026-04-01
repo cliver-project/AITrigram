@@ -171,29 +171,29 @@ var _ = BeforeSuite(func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "Using controller image: %s\n", controllerIMG)
 
 	// Always install CRDs to ensure they match the current code.
-	// Skipping on "already exists" risks running tests against stale schemas.
 	By("installing CRDs to the cluster")
 	cmd := exec.Command("make", "install")
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-	// Always build and deploy the controller to ensure the binary matches
-	// the current code. A stale controller causes unmarshal errors when
-	// Go types and CRD schemas diverge.
-	By("building the controller binary and docker image")
-	cmd = exec.Command("make", "build", "docker-build", "IMG="+controllerIMG)
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller")
+	if os.Getenv("E2E_CONTROLLER_IMG") != "" {
+		// CI mode: image is already pushed to the registry. Just deploy.
+		_, _ = fmt.Fprintf(GinkgoWriter, "Using pre-built image from registry\n")
+	} else {
+		// Local mode: build and load into minikube.
+		By("building the controller binary and docker image")
+		cmd = exec.Command("make", "build", "docker-build", "IMG="+controllerIMG)
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the controller")
 
-	By("loading the controller image into minikube")
-	cmd = exec.Command("sh", "-c",
-		"$(command -v docker || command -v podman) save "+controllerIMG+" | minikube image load --overwrite=true -")
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
+		By("loading the controller image into minikube")
+		cmd = exec.Command("sh", "-c",
+			"$(command -v docker || command -v podman) save "+controllerIMG+" | minikube image load --overwrite=true -")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image into minikube")
+	}
 
 	// Delete the existing controller deployment so the new image is picked up.
-	// We avoid make undeploy because it deletes the namespace, which blocks
-	// the subsequent make deploy until the namespace finishes terminating.
 	By("removing existing controller deployment")
 	cmd = exec.Command("kubectl", "delete", "deployment", "aitrigram-controller-manager",
 		"-n", "aitrigram-system", "--ignore-not-found")

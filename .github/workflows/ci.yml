@@ -18,6 +18,8 @@ jobs:
       contents: write
       packages: write
       id-token: write
+    env:
+      E2E_CONTROLLER_IMG: "ghcr.io/cliver-project/aitrigram-controller:sha-${{ github.sha }}"
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -43,6 +45,21 @@ jobs:
           go mod tidy
           make all
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image (SHA tag for e2e)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.E2E_CONTROLLER_IMG }}
+
       - name: Start Minikube
         uses: medyagh/setup-minikube@latest
         with:
@@ -52,18 +69,18 @@ jobs:
       - name: Running Test e2e
         env:
           E2E_DUMP_LOGS: "true"
-          E2E_CONTROLLER_IMG: "ghcr.io/cliver-project/aitrigram-controller:e2e-${{ github.run_number }}"
         run: |
           go mod tidy
           make test-e2e
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # After e2e passes, promote the image to final tags
+      - name: Tag as latest on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SRC: ${{ env.E2E_CONTROLLER_IMG }}
+        run: |
+          docker buildx imagetools create -t ghcr.io/cliver-project/aitrigram-controller:latest "$SRC"
+          docker buildx imagetools create -t "ghcr.io/cliver-project/aitrigram-controller:${{ github.sha }}" "$SRC"
 
       - name: Extract Docker metadata for tags
         id: meta
@@ -74,28 +91,13 @@ jobs:
           tags: |
             type=ref,event=tag
 
-      - name: Build and push image on Push to main
-        uses: docker/build-push-action@v6
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/cliver-project/aitrigram-controller:latest
-            ghcr.io/cliver-project/aitrigram-controller:${{ github.sha }}
-
-      - name: Build and push image on Tag
-        uses: docker/build-push-action@v6
+      - name: Tag release version
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+        env:
+          SRC: ${{ env.E2E_CONTROLLER_IMG }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker buildx imagetools create -t "$RELEASE_TAG" "$SRC"
 
       - name: Generate install.yaml
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
