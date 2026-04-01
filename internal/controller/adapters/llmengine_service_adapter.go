@@ -1,8 +1,6 @@
 package adapters
 
 import (
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -16,7 +14,7 @@ func AdaptService(ctx component.LLMEngineContext, service *corev1.Service) error
 	modelRepo := ctx.ModelRepo
 
 	// Set name and labels
-	name := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+	name := ComponentName(llmEngine.Name, modelRepo.Name)
 	service.SetName(name)
 	service.Labels = map[string]string{
 		"app":   llmEngine.Name,

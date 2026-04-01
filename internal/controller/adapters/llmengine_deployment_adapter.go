@@ -18,7 +18,7 @@ func AdaptDeployment(ctx component.LLMEngineContext, deployment *appsv1.Deployme
 	modelRepo := ctx.ModelRepo
 
 	// Set name and labels
-	name := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+	name := ComponentName(llmEngine.Name, modelRepo.Name)
 	deployment.SetName(name)
 	setDeploymentLabels(deployment, llmEngine.Name, modelRepo.Name, llmEngine.Spec.EngineType)
 

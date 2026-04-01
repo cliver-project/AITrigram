@@ -29,7 +29,15 @@ import (
 	"sigs.k8s.io/yaml"
 
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
+	"github.com/cliver-project/AITrigram/internal/controller/storage"
 )
+
+// ComponentName returns a name for Deployment/Service resources derived from
+// the engine and model names. The result is capped at 52 chars so that
+// Kubernetes can append ReplicaSet and pod hashes without exceeding 63 chars.
+func ComponentName(engineName, modelName string) string {
+	return storage.TruncatedName(52, "", engineName, modelName)
+}
 
 const (
 	// DefaultGPUResourceType is the default GPU resource type for Kubernetes

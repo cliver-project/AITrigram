@@ -1,8 +1,6 @@
 package adapters
 
 import (
-	"fmt"
-
 	aitrigramv1 "github.com/cliver-project/AITrigram/api/v1"
 	"github.com/cliver-project/AITrigram/internal/controller/component"
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +14,7 @@ import (
 // Each component manages one Deployment and one Service.
 func NewModelComponent(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.ModelRepository) component.LLMEngineComponent {
 	// Component name is unique per model combination
-	componentName := fmt.Sprintf("%s-%s", llmEngine.Name, modelRepo.Name)
+	componentName := ComponentName(llmEngine.Name, modelRepo.Name)
 
 	builder := component.NewLLMEngineComponent(componentName).
 		WithDeploymentAdapter(AdaptDeployment).

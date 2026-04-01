@@ -303,18 +303,25 @@ func buildReadOnlyPVSpec(backendRef *aitrigramv1.BackendReference, storageStatus
 // llmEnginePVName generates a PV name within the 63-char K8s limit.
 // Format: "le-{engine}-{model}" truncated + hash suffix for uniqueness.
 func llmEnginePVName(engineName, modelRepoName string) string {
-	return truncatedName("le", engineName, modelRepoName)
+	return TruncatedName(63, "le", engineName, modelRepoName)
 }
 
 // llmEnginePVCName generates a PVC name within the 63-char K8s limit.
 func llmEnginePVCName(engineName, modelRepoName string) string {
-	return truncatedName("le", engineName, modelRepoName)
+	return TruncatedName(63, "le", engineName, modelRepoName)
 }
 
-// truncatedName generates a name within 63 chars: "{prefix}-{a}-{b}" with hash if too long.
-func truncatedName(prefix, a, b string) string {
-	const maxLen = 63
-	full := fmt.Sprintf("%s-%s-%s", prefix, a, b)
+// TruncatedName generates a name within maxLen chars: "{prefix}-{a}-{b}" with
+// a hash suffix when truncation is needed. The result is deterministic for the
+// same inputs. Use maxLen=63 for resources that don't spawn children (PV, PVC,
+// Service), or maxLen=52 for Deployments (leaves room for RS+pod hash suffixes).
+func TruncatedName(maxLen int, prefix, a, b string) string {
+	var full string
+	if prefix == "" {
+		full = fmt.Sprintf("%s-%s", a, b)
+	} else {
+		full = fmt.Sprintf("%s-%s-%s", prefix, a, b)
+	}
 	if len(full) <= maxLen {
 		return full
 	}
@@ -324,8 +331,12 @@ func truncatedName(prefix, a, b string) string {
 	h.Write([]byte(full))
 	hash := fmt.Sprintf("%x", h.Sum32())[:6]
 
-	// Reserve space for prefix + "-" + "-" + "-" + hash
-	available := maxLen - len(prefix) - 3 - len(hash) // 3 for separators
+	// Reserve space for separators and hash
+	separators := 2 // "-" between a/b and "-" before hash
+	if prefix != "" {
+		separators = 3 // extra "-" after prefix
+	}
+	available := maxLen - len(prefix) - separators - len(hash)
 	halfLen := available / 2
 
 	truncA := a
@@ -338,6 +349,9 @@ func truncatedName(prefix, a, b string) string {
 		truncB = truncB[:remaining]
 	}
 
+	if prefix == "" {
+		return fmt.Sprintf("%s-%s-%s", truncA, truncB, hash)
+	}
 	return fmt.Sprintf("%s-%s-%s-%s", prefix, truncA, truncB, hash)
 }
 
