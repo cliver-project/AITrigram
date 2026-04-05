@@ -17,6 +17,7 @@ package adapters
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -335,13 +336,8 @@ func BuildOllamaEnv(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Mod
 		{Name: "OLLAMA_MAX_LOADED_MODELS", Value: "1"},
 	}
 
-	// Add environment paths
-	for envName, path := range envPaths {
-		commonEnv = append(commonEnv, corev1.EnvVar{
-			Name:  envName,
-			Value: path,
-		})
-	}
+	// Add environment paths (sorted for deterministic pod template hash)
+	commonEnv = append(commonEnv, sortedEnvFromMap(envPaths)...)
 
 	// Add CPU or GPU specific environment variables
 	var specificEnv []corev1.EnvVar
@@ -567,6 +563,22 @@ func BuildGPUTolerations(gpuConfig *aitrigramv1.GPUConfig) []corev1.Toleration {
 		return gpuConfig.Tolerations
 	}
 	return GetDefaultGPUTolerations(gpuConfig.Type)
+}
+
+// sortedEnvFromMap converts a map of env var names to values into a sorted slice
+// of EnvVar. Sorting ensures deterministic pod template hashes across reconciles.
+func sortedEnvFromMap(envPaths map[string]string) []corev1.EnvVar {
+	keys := make([]string, 0, len(envPaths))
+	for k := range envPaths {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	envVars := make([]corev1.EnvVar, 0, len(keys))
+	for _, k := range keys {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: envPaths[k]})
+	}
+	return envVars
 }
 
 // MergeEnvVars merges default and user environment variables, with user vars taking precedence

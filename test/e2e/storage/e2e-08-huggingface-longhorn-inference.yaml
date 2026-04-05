@@ -1,15 +1,15 @@
 ---
-# E2E Test: Full inference test with HuggingFace + HostPath storage
+# E2E Test: Full inference test with HuggingFace + Longhorn storage + vLLM (CPU mode)
 # This tests:
-# 1. ModelRepository deployment with HostPath
-# 2. LLMEngine deployment with vLLM
-# 3. Inference requests
+# 1. ModelRepository deployment with Longhorn StorageClass (auto-detected)
+# 2. LLMEngine deployment with vLLM in CPU-only mode
+# 3. Inference requests via OpenAI-compatible API
 
 # ModelRepository for a tiny HuggingFace model
 apiVersion: aitrigram.cliver-project.github.io/v1
 kind: ModelRepository
 metadata:
-  name: hf-hostpath-inference-test
+  name: hf-longhorn-inference-test
 spec:
   source:
     origin: huggingface
@@ -17,33 +17,34 @@ spec:
     modelId: hf-internal-testing/tiny-random-gpt2
 
   storage:
-    size: "10Gi"
-    storageClass: "auto"
+    size: "5Gi"
+    storageClass: "longhorn"
     mountPath: /data/models
 
   autoDownload: true
 
 ---
-# LLMEngine for HuggingFace with vLLM
+# LLMEngine for HuggingFace with vLLM (CPU-only mode)
 apiVersion: aitrigram.cliver-project.github.io/v1
 kind: LLMEngine
 metadata:
-  name: hf-hostpath-inference-test
+  name: hf-longhorn-inference-test
   namespace: default
 spec:
   engineType: vllm
   modelRefs:
-    - name: hf-hostpath-inference-test
+    - name: hf-longhorn-inference-test
   replicas: 1
   servicePort: 8000
   resources:
     requests:
-      cpu: "500m"
-      memory: "1Gi"
+      cpu: "1"
+      memory: "2Gi"
     limits:
-      cpu: "2"
-      memory: "4Gi"
-  # Minimal vLLM args for tiny model
+      cpu: "4"
+      memory: "8Gi"
+  env:
+    - name: VLLM_TARGET_DEVICE
+      value: "cpu"
   args:
     - --max-model-len=256
-    - --gpu-memory-utilization=0.5
