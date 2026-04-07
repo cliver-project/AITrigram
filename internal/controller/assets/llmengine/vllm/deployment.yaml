@@ -37,8 +37,6 @@ spec:
         env:
         - name: HF_HOME
           value: /data/models
-        - name: TRANSFORMERS_CACHE
-          value: /data/models
         - name: HUGGINGFACE_HUB_CACHE
           value: /data/models/hub
         - name: HF_HUB_OFFLINE

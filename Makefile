@@ -185,9 +185,8 @@ deploy-dev: manifests generate build kustomize ## Build, push, and deploy a dev 
 	$(CONTAINER_TOOL) build --platform linux/amd64 -t $(DEV_IMG) .
 	$(CONTAINER_TOOL) push $(PUSH_ARGS) $(DEV_IMG)
 	$(eval IMG := $(DEV_IMG))
+	-$(call kustomize-with-image,default,| $(KUBECTL) delete --ignore-not-found -f -)
 	$(call kustomize-with-image,default,| $(KUBECTL) apply -f -)
-	$(KUBECTL) rollout restart deployment/aitrigram-controller-manager -n aitrigram-system
-	$(KUBECTL) rollout status deployment/aitrigram-controller-manager -n aitrigram-system --timeout=120s
 	@echo "Deployed $(DEV_IMG)"
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple

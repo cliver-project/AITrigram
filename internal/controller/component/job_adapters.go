@@ -146,10 +146,6 @@ func buildJobEnvironment(
 			Value: mountPath,
 		})
 		env = append(env, corev1.EnvVar{
-			Name:  "TRANSFORMERS_CACHE",
-			Value: mountPath,
-		})
-		env = append(env, corev1.EnvVar{
 			Name:  "HUGGINGFACE_HUB_CACHE",
 			Value: mountPath + "/hub",
 		})

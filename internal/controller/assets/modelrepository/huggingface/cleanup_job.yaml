@@ -28,8 +28,6 @@ spec:
         env:
         - name: HF_HOME
           value: /data/models
-        - name: TRANSFORMERS_CACHE
-          value: /data/models
         - name: HUGGINGFACE_HUB_CACHE
           value: /data/models/hub
         volumeMounts: []  # Will be populated by adapter
