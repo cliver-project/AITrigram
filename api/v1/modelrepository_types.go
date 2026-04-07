@@ -178,11 +178,20 @@ type RevisionStatus struct {
 
 // Condition type constants for ModelRepository
 const (
-	// ModelRepoConditionReady indicates all revisions are downloaded and the model is ready
-	ModelRepoConditionReady = "Ready"
-
-	// ModelRepoConditionStorageReady indicates storage is provisioned and bound
+	ModelRepoConditionReady        = "Ready"
 	ModelRepoConditionStorageReady = "StorageReady"
+)
+
+// Condition reason constants for ModelRepository
+const (
+	ModelRepoReasonStorageProviderFailed = "StorageProviderFailed"
+	ModelRepoReasonValidationFailed      = "ValidationFailed"
+	ModelRepoReasonProvisionFailed       = "ProvisionFailed"
+	ModelRepoReasonStorageProvisioned    = "StorageProvisioned"
+	ModelRepoReasonDownloadFailed        = "DownloadFailed"
+	ModelRepoReasonAllRevisionsReady     = "AllRevisionsReady"
+	ModelRepoReasonDownloading           = "Downloading"
+	ModelRepoReasonDeletionBlocked       = "DeletionBlocked"
 )
 
 // ModelRepositoryStatus defines the observed state of ModelRepository

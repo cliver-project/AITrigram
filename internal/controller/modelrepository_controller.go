@@ -87,7 +87,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if modelRepo.GetDeletionTimestamp() != nil {
 			return ctrl.Result{}, r.handleDeletion(ctx, modelRepo, nil)
 		}
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "StorageProviderFailed",
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonStorageProviderFailed,
 			fmt.Sprintf("Failed to create storage provider: %v", err))
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -133,7 +133,7 @@ func (r *ModelRepositoryReconciler) reconcileStorage(
 	logger := log.FromContext(ctx)
 
 	if err := provider.ValidateConfig(); err != nil {
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, "ValidationFailed",
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonValidationFailed,
 			fmt.Sprintf("Storage validation failed: %v", err))
 		return nil, &ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -144,7 +144,7 @@ func (r *ModelRepositoryReconciler) reconcileStorage(
 	}
 
 	if err := provider.CreateStorage(ctx, namespace); err != nil {
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, "ProvisionFailed",
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonProvisionFailed,
 			fmt.Sprintf("Failed to provision storage: %v", err))
 		return nil, &ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -340,7 +340,7 @@ func (r *ModelRepositoryReconciler) handleJobStatus(
 		rs := ensureRevStatus()
 		rs.Status = aitrigramv1.DownloadPhaseFailed
 		_ = r.updateRevisionStatus(ctx, modelRepo, rs)
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "DownloadFailed",
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonDownloadFailed,
 			fmt.Sprintf("Download job failed for revision %s", revRef.Name))
 		return false, &ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
@@ -372,9 +372,9 @@ func (r *ModelRepositoryReconciler) updateOverallPhase(
 	}
 
 	if allReady {
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionTrue, "AllRevisionsReady", "All revisions downloaded successfully")
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionTrue, aitrigramv1.ModelRepoReasonAllRevisionsReady, "All revisions downloaded successfully")
 	} else if anyJobRunning {
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "Downloading", "Downloading revisions")
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonDownloading, "Downloading revisions")
 	}
 }
 
@@ -404,7 +404,7 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 		logger.Info("Blocking ModelRepository deletion", "reason", msg)
 
 		// Update status to inform the user
-		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "DeletionBlocked", msg)
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, aitrigramv1.ModelRepoReasonDeletionBlocked, msg)
 
 		// Return error to requeue and keep checking
 		return fmt.Errorf("deletion blocked: %s", msg)
@@ -495,7 +495,7 @@ func deriveModelRepoPhase(conditions []metav1.Condition) aitrigramv1.DownloadPha
 		return aitrigramv1.DownloadPhaseReady
 	}
 	switch ready.Reason {
-	case "Downloading":
+	case aitrigramv1.ModelRepoReasonDownloading:
 		return aitrigramv1.DownloadPhaseDownloading
 	default:
 		return aitrigramv1.DownloadPhaseFailed
@@ -627,7 +627,7 @@ func (r *ModelRepositoryReconciler) updateStorageStatus(ctx context.Context, mod
 		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 			Type:    aitrigramv1.ModelRepoConditionStorageReady,
 			Status:  metav1.ConditionTrue,
-			Reason:  "StorageProvisioned",
+			Reason:  aitrigramv1.ModelRepoReasonStorageProvisioned,
 			Message: fmt.Sprintf("Storage provisioned with class %s", storageStatus.StorageClass),
 		})
 	})

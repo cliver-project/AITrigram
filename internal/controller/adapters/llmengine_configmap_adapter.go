@@ -46,7 +46,14 @@ func AdaptVLLMConfigMap(ctx component.LLMEngineContext, obj client.Object) error
 
 	// Build vLLM configuration
 	requestGPU := DetectGPURequest(llmEngine)
-	vllmConfig := BuildVLLMConfig(modelId, revision, requestGPU, llmEngine.Spec.Args)
+	gpuCount := 0
+	if requestGPU && llmEngine.Spec.GPU != nil {
+		gpuCount = llmEngine.Spec.GPU.Count
+		if gpuCount == 0 {
+			gpuCount = 1
+		}
+	}
+	vllmConfig := BuildVLLMConfig(modelId, revision, requestGPU, gpuCount, llmEngine.Spec.Args)
 
 	// Marshal to YAML
 	yamlData, err := MarshalVLLMConfig(vllmConfig)

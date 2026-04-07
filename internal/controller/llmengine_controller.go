@@ -92,12 +92,12 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Fetch referenced ModelRepositories
 	modelRepos, err := r.fetchModelRepositories(ctx, llmEngine)
 	if err != nil {
-		r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "ModelRepositoryFetchFailed", err.Error())
+		r.setNotReady(ctx, llmEngine, aitrigramv1.LLMEngineReasonModelRepositoryFetchFailed, err.Error())
 		return ctrl.Result{}, nil
 	}
 
 	if len(modelRepos) == 0 {
-		r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "NoModelsFound", "No ModelRepository resources found")
+		r.setNotReady(ctx, llmEngine, aitrigramv1.LLMEngineReasonNoModelsFound, "No ModelRepository resources found")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -105,17 +105,17 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for _, modelRepo := range modelRepos {
 		if modelRepo.Status.Phase != aitrigramv1.DownloadPhaseReady {
 			msg := fmt.Sprintf("Waiting for ModelRepository %s (phase: %s)", modelRepo.Name, modelRepo.Status.Phase)
-			r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+			_ = r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
 				meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 					Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
 					Status:  metav1.ConditionFalse,
-					Reason:  "WaitingForModels",
+					Reason:  aitrigramv1.LLMEngineReasonWaitingForModels,
 					Message: msg,
 				})
 				meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 					Type:    aitrigramv1.LLMEngineConditionReady,
 					Status:  metav1.ConditionFalse,
-					Reason:  "WaitingForModels",
+					Reason:  aitrigramv1.LLMEngineReasonWaitingForModels,
 					Message: msg,
 				})
 				s.Phase = deriveLLMEnginePhase(s.Conditions)
@@ -153,8 +153,12 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 		if err := r.validateGPUAvailability(ctx, llmEngine, requiredNodeName); err != nil {
-			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "GPUValidationFailed", err.Error())
-			return ctrl.Result{}, nil
+			logger.Info("GPU validation failed — will retry in case GPU nodes come online",
+				"error", err.Error(),
+				"gpuType", llmEngine.Spec.GPU.Type,
+				"gpuCount", llmEngine.Spec.GPU.Count)
+			r.setNotReady(ctx, llmEngine, aitrigramv1.LLMEngineReasonGPUNotAvailable, err.Error())
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
 	}
 
@@ -164,7 +168,7 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for _, modelRepo := range modelRepos {
 		result, err := storage.EnsureLLMEngineStorage(ctx, r.Client, llmEngine, modelRepo)
 		if err != nil {
-			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "StoragePending",
+			r.setNotReady(ctx, llmEngine, aitrigramv1.LLMEngineReasonStoragePending,
 				fmt.Sprintf("Preparing storage for model %s: %v", modelRepo.Name, err))
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
@@ -194,7 +198,7 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Reconcile component (creates/updates Deployment and Service)
 		if err := comp.Reconcile(compCtx); err != nil {
-			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "ReconcileFailed",
+			r.setNotReady(ctx, llmEngine, aitrigramv1.LLMEngineReasonReconcileFailed,
 				fmt.Sprintf("Failed to reconcile model %s: %v", modelRepo.Name, err))
 			return ctrl.Result{}, nil
 		}
@@ -222,18 +226,18 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.updateReferencedEngines(ctx, modelNames)
 
 	if totalReady == totalDeployments {
-		r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+		_ = r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
 			s.ModelRepositories = modelNames
 			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 				Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
 				Status:  metav1.ConditionTrue,
-				Reason:  "ModelsReady",
+				Reason:  aitrigramv1.LLMEngineReasonModelsReady,
 				Message: "All referenced models are available",
 			})
 			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 				Type:    aitrigramv1.LLMEngineConditionReady,
 				Status:  metav1.ConditionTrue,
-				Reason:  "DeploymentsReady",
+				Reason:  aitrigramv1.LLMEngineReasonDeploymentsReady,
 				Message: fmt.Sprintf("All %d model deployments ready", totalDeployments),
 			})
 			s.Phase = deriveLLMEnginePhase(s.Conditions)
@@ -241,18 +245,18 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+	_ = r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
 		s.ModelRepositories = modelNames
 		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 			Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
 			Status:  metav1.ConditionTrue,
-			Reason:  "ModelsReady",
+			Reason:  aitrigramv1.LLMEngineReasonModelsReady,
 			Message: "All referenced models are available",
 		})
 		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 			Type:    aitrigramv1.LLMEngineConditionReady,
 			Status:  metav1.ConditionFalse,
-			Reason:  "DeploymentsCreated",
+			Reason:  aitrigramv1.LLMEngineReasonDeploymentsCreated,
 			Message: fmt.Sprintf("%d/%d deployments ready", totalReady, totalDeployments),
 		})
 		s.Phase = deriveLLMEnginePhase(s.Conditions)
@@ -445,18 +449,19 @@ func (r *LLMEngineReconciler) syncStatus(ctx context.Context, llmEngine *aitrigr
 	})
 }
 
-// setCondition sets a single condition and derives Phase.
-func (r *LLMEngineReconciler) setCondition(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, condType string, status metav1.ConditionStatus, reason, message string) {
+// setNotReady sets the Ready condition to False and derives Phase.
+// Success (Ready=True) uses syncStatus directly to set multiple conditions atomically.
+func (r *LLMEngineReconciler) setNotReady(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, reason, message string) {
 	if err := r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
 		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
-			Type:    condType,
-			Status:  status,
+			Type:    aitrigramv1.LLMEngineConditionReady,
+			Status:  metav1.ConditionFalse,
 			Reason:  reason,
 			Message: message,
 		})
 		s.Phase = deriveLLMEnginePhase(s.Conditions)
 	}); err != nil {
-		log.FromContext(context.TODO()).Error(err, "Failed to set condition", "type", condType)
+		log.FromContext(context.TODO()).Error(err, "Failed to set NotReady condition")
 	}
 }
 
@@ -470,9 +475,9 @@ func deriveLLMEnginePhase(conditions []metav1.Condition) string {
 		return "Running"
 	}
 	switch ready.Reason {
-	case "DeploymentsCreated":
+	case aitrigramv1.LLMEngineReasonDeploymentsCreated:
 		return "Starting"
-	case "StoragePending", "WaitingForModels", "NoModelsFound":
+	case aitrigramv1.LLMEngineReasonStoragePending, aitrigramv1.LLMEngineReasonWaitingForModels, aitrigramv1.LLMEngineReasonNoModelsFound, aitrigramv1.LLMEngineReasonGPUNotAvailable:
 		return "Pending"
 	default:
 		return "Error"

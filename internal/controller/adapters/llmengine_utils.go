@@ -99,26 +99,26 @@ func DetectGPURequest(llmEngine *aitrigramv1.LLMEngine) bool {
 //
 // Security: trust_remote_code is always set to false for read-only inference to prevent
 // arbitrary code execution from model repositories.
-func BuildVLLMConfig(modelId, revision string, requestGPU bool, userArgs []string) map[string]interface{} {
+func BuildVLLMConfig(modelId, revision string, requestGPU bool, gpuCount int, userArgs []string) map[string]interface{} {
 	config := make(map[string]interface{})
 
 	// Default parameters based on GPU availability
 	if requestGPU {
 		// GPU-optimized vLLM configuration
-		config["dtype"] = "float8_e5m2"
-		config["max_num_batched_tokens"] = 32768
-		config["max_model_len"] = 8192
-		config["enforce_eager"] = true
-		// GPU memory utilization - use 95% for single GPU inference
-		config["gpu_memory_utilization"] = 0.95
-		// Attention backend configuration (moved from deprecated env var)
-		config["attention_config"] = map[string]interface{}{
-			"backend": "FLASH_ATTN", // Use FlashAttention for best GPU performance
+		// dtype=auto lets vLLM pick the best dtype for the model and hardware
+		config["dtype"] = "auto"
+		// gpu_memory_utilization=0.9 is vLLM's default, safe for most deployments
+		config["gpu_memory_utilization"] = 0.9
+		// Multi-GPU: tensor parallelism shards model across GPUs
+		if gpuCount > 1 {
+			config["tensor_parallel_size"] = gpuCount
 		}
+		// Note: enforce_eager defaults to false — CUDA graphs give better GPU perf
+		// Note: attention backend is auto-selected by vLLM based on hardware
+		// Note: max_model_len and max_num_batched_tokens auto-calculated from GPU memory
 	} else {
 		// CPU-only vLLM configuration
-		// Note: device selection is handled by the vLLM CPU image
-		// (vllm/vllm-openai-cpu), not by config file or env var
+		// Device selection is handled by the vLLM CPU image (vllm/vllm-openai-cpu)
 		config["dtype"] = "half"
 		config["max_num_batched_tokens"] = 2048
 		config["max_model_len"] = 2048
@@ -408,17 +408,12 @@ func BuildVLLMEnv(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Model
 	// Add hardware-specific environment variables
 	var specificEnv []corev1.EnvVar
 	if requestGPU {
-		// GPU-specific environment variables (single GPU assumed)
-		// Note: VLLM_ATTENTION_BACKEND and VLLM_GPU_MEMORY_UTILIZATION are deprecated
-		// and have been moved to the YAML config file (see BuildVLLMConfig)
-		specificEnv = []corev1.EnvVar{
-			// NCCL configuration for distributed operations
-			{Name: "NCCL_LAUNCH_MODE", Value: "GROUP"},
-			// PyTorch CUDA memory allocator configuration
-			{Name: "PYTORCH_CUDA_ALLOC_CONF", Value: "expandable_segments:True,max_split_size_mb:512"},
-			// Use first GPU only
-			{Name: "CUDA_VISIBLE_DEVICES", Value: "0"},
-		}
+		// GPU-specific environment variables
+		// Note: CUDA_VISIBLE_DEVICES is NOT set — NVIDIA device plugin handles GPU isolation
+		// Note: NCCL is auto-configured by vLLM for multi-GPU (tensor_parallel_size)
+		// Note: PYTORCH_CUDA_ALLOC_CONF is NOT set — expandable_segments conflicts with
+		//       vLLM's cumem allocator. Let PyTorch defaults handle CUDA allocation.
+		specificEnv = []corev1.EnvVar{}
 	} else {
 		// CPU-specific environment variables (8 cores assumed)
 		specificEnv = []corev1.EnvVar{
@@ -512,20 +507,10 @@ func MergeResourceRequirements(base, additional corev1.ResourceRequirements) cor
 	return result
 }
 
-// AddGPUCapabilities adds GPU-specific capabilities to an existing security context
-// Modifies the security context in-place by adding SYS_ADMIN capability
+// AddGPUCapabilities is a no-op placeholder.
+// NVIDIA device plugin handles GPU device access — no extra capabilities needed.
 func AddGPUCapabilities(securityContext *corev1.SecurityContext) {
-	if securityContext == nil {
-		return
-	}
-
-	// Initialize capabilities if not present
-	if securityContext.Capabilities == nil {
-		securityContext.Capabilities = &corev1.Capabilities{}
-	}
-
-	// Add SYS_ADMIN capability for GPU access
-	securityContext.Capabilities.Add = append(securityContext.Capabilities.Add, "SYS_ADMIN")
+	// Intentionally empty — kept to avoid breaking callers
 }
 
 // BuildGPUNodeSelector builds node selector for GPU workloads

@@ -166,9 +166,8 @@ func TestAdaptDeployment_vLLM_GPU(t *testing.T) {
 	gpuRequest := container.Resources.Requests["nvidia.com/gpu"]
 	assert.Equal(t, int64(2), gpuRequest.Value())
 
-	// Verify GPU security context (should have SYS_ADMIN capability)
-	assert.NotNil(t, container.SecurityContext.Capabilities)
-	assert.Contains(t, container.SecurityContext.Capabilities.Add, corev1.Capability("SYS_ADMIN"))
+	// Verify GPU security context — no SYS_ADMIN needed, NVIDIA device plugin handles access
+	assert.NotNil(t, container.SecurityContext)
 
 	// Verify vLLM image
 	assert.Equal(t, "vllm/vllm-openai:latest", container.Image)

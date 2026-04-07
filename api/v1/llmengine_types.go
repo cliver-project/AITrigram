@@ -196,11 +196,21 @@ type LLMEngineSpec struct {
 
 // Condition type constants for LLMEngine
 const (
-	// LLMEngineConditionReady indicates all deployments are running and ready
-	LLMEngineConditionReady = "Ready"
-
-	// LLMEngineConditionModelsAvailable indicates all referenced ModelRepositories are ready
+	LLMEngineConditionReady           = "Ready"
 	LLMEngineConditionModelsAvailable = "ModelsAvailable"
+)
+
+// Condition reason constants for LLMEngine
+const (
+	LLMEngineReasonModelRepositoryFetchFailed = "ModelRepositoryFetchFailed"
+	LLMEngineReasonNoModelsFound              = "NoModelsFound"
+	LLMEngineReasonWaitingForModels           = "WaitingForModels"
+	LLMEngineReasonGPUNotAvailable            = "GPUNotAvailable"
+	LLMEngineReasonStoragePending             = "StoragePending"
+	LLMEngineReasonReconcileFailed            = "ReconcileFailed"
+	LLMEngineReasonModelsReady                = "ModelsReady"
+	LLMEngineReasonDeploymentsReady           = "DeploymentsReady"
+	LLMEngineReasonDeploymentsCreated         = "DeploymentsCreated"
 )
 
 // LLMEngineStatus defines the observed state of LLMEngine.
