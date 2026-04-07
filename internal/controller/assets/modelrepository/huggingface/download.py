@@ -48,7 +48,8 @@ def main():
     revision = os.environ.get('REVISION_ID', 'main')
 
     print(f"Downloading model: {model_id} (revision: {revision})")
-    print(f"Target directory: {hf_home}")
+    print(f"HF_HOME: {hf_home}")
+    print(f"Cache dir: {hf_home}/hub")
 
     if token:
         print("Using authentication token from HF_TOKEN")
@@ -56,14 +57,16 @@ def main():
         print("No authentication token provided (public models only)")
 
     try:
-        snapshot_download(
+        # Download into HF cache format ($HF_HOME/hub/models--org--name/snapshots/<hash>/)
+        # This enables: revision deduplication, scan_cache_dir cleanup, and vLLM's
+        # get_model_path() to locate models by repo ID with local_files_only=True
+        path = snapshot_download(
             repo_id=model_id,
             revision=revision,
-            local_dir=hf_home,
             token=token,
             resume_download=True,
         )
-        print(f"Successfully downloaded {model_id}")
+        print(f"Successfully downloaded {model_id} to {path}")
     except Exception as e:
         print(f"ERROR: Failed to download model: {e}", file=sys.stderr)
         sys.exit(1)

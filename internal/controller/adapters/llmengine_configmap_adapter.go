@@ -33,11 +33,9 @@ func AdaptVLLMConfigMap(ctx component.LLMEngineContext, obj client.Object) error
 	llmEngine := ctx.LLMEngine
 	modelRepo := ctx.ModelRepo
 
-	// Get model name and revision
-	modelName := modelRepo.Spec.ModelName
-	if modelName == "" {
-		modelName = modelRepo.Name
-	}
+	// Use the HuggingFace model ID (repo ID) so vLLM can locate the model
+	// in the HF cache via get_model_path() with local_files_only=True
+	modelId := modelRepo.Spec.Source.ModelId
 	revision := ""
 	for _, ref := range llmEngine.Spec.ModelRefs {
 		if ref.Name == modelRepo.Name {
@@ -48,7 +46,7 @@ func AdaptVLLMConfigMap(ctx component.LLMEngineContext, obj client.Object) error
 
 	// Build vLLM configuration
 	requestGPU := DetectGPURequest(llmEngine)
-	vllmConfig := BuildVLLMConfig(modelName, revision, requestGPU, llmEngine.Spec.Args)
+	vllmConfig := BuildVLLMConfig(modelId, revision, requestGPU, llmEngine.Spec.Args)
 
 	// Marshal to YAML
 	yamlData, err := MarshalVLLMConfig(vllmConfig)

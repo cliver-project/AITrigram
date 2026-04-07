@@ -145,10 +145,6 @@ func buildJobEnvironment(
 			Name:  "HF_HOME",
 			Value: mountPath,
 		})
-		env = append(env, corev1.EnvVar{
-			Name:  "HUGGINGFACE_HUB_CACHE",
-			Value: mountPath + "/hub",
-		})
 		// Add HF_TOKEN if provided (optional)
 		if modelSource != nil && modelSource.HFTokenSecret != "" {
 			key := modelSource.HFTokenSecretKey

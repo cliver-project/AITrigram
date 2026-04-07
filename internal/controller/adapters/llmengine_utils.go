@@ -79,7 +79,6 @@ func GetStoragePaths(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Mo
 		// This is the same as the ModelRepository storage path
 		if modelRepo != nil && modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginHuggingFace {
 			envPaths["HF_HOME"] = modelPath
-			envPaths["HUGGINGFACE_HUB_CACHE"] = modelPath + "/hub"
 		}
 	case aitrigramv1.LLMEngineTypeOllama:
 		// For Ollama, OLLAMA_MODELS points to model storage
@@ -100,7 +99,7 @@ func DetectGPURequest(llmEngine *aitrigramv1.LLMEngine) bool {
 //
 // Security: trust_remote_code is always set to false for read-only inference to prevent
 // arbitrary code execution from model repositories.
-func BuildVLLMConfig(modelName, revision string, requestGPU bool, userArgs []string) map[string]interface{} {
+func BuildVLLMConfig(modelId, revision string, requestGPU bool, userArgs []string) map[string]interface{} {
 	config := make(map[string]interface{})
 
 	// Default parameters based on GPU availability
@@ -126,8 +125,8 @@ func BuildVLLMConfig(modelName, revision string, requestGPU bool, userArgs []str
 		config["enforce_eager"] = true
 	}
 
-	// Model identity
-	config["model"] = modelName
+	// Model identity — HuggingFace repo ID resolved against HF cache by vLLM
+	config["model"] = modelId
 	if revision != "" {
 		config["revision"] = revision
 	}
