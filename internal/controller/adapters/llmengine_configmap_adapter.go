@@ -33,9 +33,22 @@ func AdaptVLLMConfigMap(ctx component.LLMEngineContext, obj client.Object) error
 	llmEngine := ctx.LLMEngine
 	modelRepo := ctx.ModelRepo
 
+	// Get model name and revision
+	modelName := modelRepo.Spec.ModelName
+	if modelName == "" {
+		modelName = modelRepo.Name
+	}
+	revision := ""
+	for _, ref := range llmEngine.Spec.ModelRefs {
+		if ref.Name == modelRepo.Name {
+			revision = ref.Revision
+			break
+		}
+	}
+
 	// Build vLLM configuration
 	requestGPU := DetectGPURequest(llmEngine)
-	vllmConfig := BuildVLLMConfig(requestGPU, llmEngine.Spec.Args)
+	vllmConfig := BuildVLLMConfig(modelName, revision, requestGPU, llmEngine.Spec.Args)
 
 	// Marshal to YAML
 	yamlData, err := MarshalVLLMConfig(vllmConfig)

@@ -173,6 +173,19 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+DEV_IMG ?= ghcr.io/cliver-project/aitrigram-controller:dev
+
+.PHONY: deploy-dev
+deploy-dev: manifests generate build kustomize ## Build, push, and deploy a dev image to the current cluster.
+	@echo "Building and pushing $(DEV_IMG) ..."
+	$(CONTAINER_TOOL) build --platform linux/amd64 -t $(DEV_IMG) .
+	$(CONTAINER_TOOL) push $(DEV_IMG)
+	$(eval IMG := $(DEV_IMG))
+	$(call kustomize-with-image,default,| $(KUBECTL) apply -f -)
+	$(KUBECTL) rollout restart deployment/aitrigram-controller-manager -n aitrigram-system
+	$(KUBECTL) rollout status deployment/aitrigram-controller-manager -n aitrigram-system --timeout=120s
+	@echo "Deployed $(DEV_IMG)"
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/

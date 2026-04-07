@@ -32,18 +32,17 @@ metadata:
   namespace: default
 spec:
   engineType: vllm
+  image: vllm/vllm-openai-cpu:latest-x86_64
   modelRefs:
     - name: hf-hostpath-inference-test
   replicas: 1
   servicePort: 8000
   resources:
     requests:
-      cpu: "500m"
-      memory: "1Gi"
+      cpu: "1"
+      memory: "2Gi"
     limits:
-      cpu: "2"
-      memory: "4Gi"
-  # Minimal vLLM args for tiny model
+      cpu: "4"
+      memory: "8Gi"
   args:
     - --max-model-len=256
-    - --gpu-memory-utilization=0.5

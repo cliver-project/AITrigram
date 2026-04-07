@@ -79,7 +79,6 @@ func GetStoragePaths(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Mo
 		// This is the same as the ModelRepository storage path
 		if modelRepo != nil && modelRepo.Spec.Source.Origin == aitrigramv1.ModelOriginHuggingFace {
 			envPaths["HF_HOME"] = modelPath
-			envPaths["TRANSFORMERS_CACHE"] = modelPath
 			envPaths["HUGGINGFACE_HUB_CACHE"] = modelPath + "/hub"
 		}
 	case aitrigramv1.LLMEngineTypeOllama:
@@ -101,10 +100,7 @@ func DetectGPURequest(llmEngine *aitrigramv1.LLMEngine) bool {
 //
 // Security: trust_remote_code is always set to false for read-only inference to prevent
 // arbitrary code execution from model repositories.
-//
-// Note: --model, --revision, --host, --port are passed as CLI arguments (not in config file)
-// to ensure CLI args always take precedence over config file values.
-func BuildVLLMConfig(requestGPU bool, userArgs []string) map[string]interface{} {
+func BuildVLLMConfig(modelName, revision string, requestGPU bool, userArgs []string) map[string]interface{} {
 	config := make(map[string]interface{})
 
 	// Default parameters based on GPU availability
@@ -122,14 +118,24 @@ func BuildVLLMConfig(requestGPU bool, userArgs []string) map[string]interface{} 
 		}
 	} else {
 		// CPU-only vLLM configuration
+		// Note: device selection is handled by the vLLM CPU image
+		// (vllm/vllm-openai-cpu), not by config file or env var
 		config["dtype"] = "half"
 		config["max_num_batched_tokens"] = 2048
 		config["max_model_len"] = 2048
 		config["enforce_eager"] = true
-		config["device"] = "cpu"
 	}
 
-	// Merge user args into config (user args override defaults except trust_remote_code)
+	// Model identity
+	config["model"] = modelName
+	if revision != "" {
+		config["revision"] = revision
+	}
+
+	// Security: always disable trust_remote_code for read-only inference
+	config["trust_remote_code"] = false
+
+	// Merge user args into config (user args override defaults)
 	if len(userArgs) > 0 {
 		userConfig := ConvertArgsToVLLMConfig(userArgs)
 		for key, value := range userConfig {

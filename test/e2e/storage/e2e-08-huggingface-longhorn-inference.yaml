@@ -32,6 +32,7 @@ metadata:
   namespace: default
 spec:
   engineType: vllm
+  image: vllm/vllm-openai-cpu:latest-x86_64
   modelRefs:
     - name: hf-longhorn-inference-test
   replicas: 1
@@ -43,8 +44,5 @@ spec:
     limits:
       cpu: "4"
       memory: "8Gi"
-  env:
-    - name: VLLM_TARGET_DEVICE
-      value: "cpu"
   args:
     - --max-model-len=256

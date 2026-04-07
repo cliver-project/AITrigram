@@ -493,100 +493,33 @@ func createMinimalDeployment() *appsv1.Deployment {
 // TestBuildVLLMArgs tests vLLM CLI argument construction
 func TestBuildVLLMArgs(t *testing.T) {
 	tests := []struct {
-		name      string
-		modelName string
-		revision  string
-		port      int32
-		userArgs  []string
-		expected  []string
+		name     string
+		port     int32
+		expected []string
 	}{
 		{
-			name:      "basic args without revision",
-			modelName: "my-model",
-			revision:  "",
-			port:      8000,
-			userArgs:  []string{},
+			name: "default port",
+			port: 8000,
 			expected: []string{
 				"--config", "/etc/vllm/vllm-config.yaml",
-				"--model", "my-model",
 				"--host", "0.0.0.0",
 				"--port", "8000",
-				"--trust-remote-code", "False",
 			},
 		},
 		{
-			name:      "with revision",
-			modelName: "my-model",
-			revision:  "main",
-			port:      8000,
-			userArgs:  []string{},
+			name: "custom port",
+			port: 8080,
 			expected: []string{
 				"--config", "/etc/vllm/vllm-config.yaml",
-				"--model", "my-model",
-				"--host", "0.0.0.0",
-				"--port", "8000",
-				"--trust-remote-code", "False",
-				"--revision", "main",
-			},
-		},
-		{
-			name:      "with user args",
-			modelName: "my-model",
-			revision:  "",
-			port:      8000,
-			userArgs:  []string{"--dtype=float16", "--max-model-len=4096"},
-			expected: []string{
-				"--config", "/etc/vllm/vllm-config.yaml",
-				"--model", "my-model",
-				"--host", "0.0.0.0",
-				"--port", "8000",
-				"--trust-remote-code", "False",
-				"--dtype=float16",
-				"--max-model-len=4096",
-			},
-		},
-		{
-			name:      "user args appended directly",
-			modelName: "my-model",
-			revision:  "main",
-			port:      8000,
-			userArgs:  []string{"--model=/other/path", "--revision=dev", "--dtype=float16"},
-			expected: []string{
-				"--config", "/etc/vllm/vllm-config.yaml",
-				"--model", "my-model",
-				"--host", "0.0.0.0",
-				"--port", "8000",
-				"--trust-remote-code", "False",
-				"--revision", "main",
-				"--model=/other/path",
-				"--revision=dev",
-				"--dtype=float16",
-			},
-		},
-		{
-			name:      "with revision and user args with duplicates",
-			modelName: "my-model",
-			revision:  "v1.0",
-			port:      8080,
-			userArgs:  []string{"--host=1.2.3.4", "--port=9000", "--dtype=float16", "--enforce-eager"},
-			expected: []string{
-				"--config", "/etc/vllm/vllm-config.yaml",
-				"--model", "my-model",
 				"--host", "0.0.0.0",
 				"--port", "8080",
-				"--trust-remote-code", "False",
-				"--revision", "v1.0",
-				"--host=1.2.3.4",
-				"--port=9000",
-				"--dtype=float16",
-				"--enforce-eager",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildVLLMArgs(tt.modelName, tt.revision, tt.port, tt.userArgs)
+			result := buildVLLMArgs(tt.port)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

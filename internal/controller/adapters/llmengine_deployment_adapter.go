@@ -86,22 +86,9 @@ func AdaptDeployment(ctx component.LLMEngineContext, deployment *appsv1.Deployme
 	// Build arguments
 	switch llmEngine.Spec.EngineType {
 	case aitrigramv1.LLMEngineTypeVLLM:
-		// Get revision from ModelRef if specified
-		revision := ""
-		for _, ref := range llmEngine.Spec.ModelRefs {
-			if ref.Name == modelRepo.Name {
-				revision = ref.Revision
-				break
-			}
-		}
-		// Get model name (defaults to metadata.name if not specified)
-		modelName := modelRepo.Spec.ModelName
-		if modelName == "" {
-			modelName = modelRepo.Name
-		}
-		// For vLLM, always build CLI args with config + model + host + port
-		// This ensures these parameters take precedence over config file values
-		container.Args = buildVLLMArgs(modelName, revision, podPort, llmEngine.Spec.Args)
+		// For vLLM, CLI args only set config file path and network binding.
+		// Model, revision, and all other params go into the config file.
+		container.Args = buildVLLMArgs(podPort)
 	case aitrigramv1.LLMEngineTypeOllama:
 		// For Ollama, use user-provided args or keep template default ("serve")
 		if len(llmEngine.Spec.Args) > 0 {
@@ -218,27 +205,14 @@ func setDeploymentLabels(deployment *appsv1.Deployment, engineName, modelName st
 	}
 }
 
-// buildVLLMArgs constructs vLLM CLI arguments ensuring critical parameters are always set.
-// These CLI arguments take precedence over config file values.
-//
-// Returns: ["--config", "/etc/vllm/vllm-config.yaml", "--model", "<path>", "--host", "0.0.0.0", "--port", "<port>", ...]
-func buildVLLMArgs(modelName, revision string, port int32, userArgs []string) []string {
-	args := []string{
-		"--config", "/etc/vllm/vllm-config.yaml",
-		"--model", modelName,
+// buildVLLMArgs constructs the minimal vLLM CLI arguments.
+// Only the config file path and network binding are set here.
+// All other parameters (model, revision, dtype, etc.) go into the config file
+// via BuildVLLMConfig.
+func buildVLLMArgs(port int32) []string {
+	return []string{
+		"--config", VLLMConfigFilePath,
 		"--host", "0.0.0.0",
 		"--port", fmt.Sprintf("%d", port),
-		"--trust-remote-code", "False",
 	}
-
-	// Add revision if specified
-	if revision != "" {
-		args = append(args, "--revision", revision)
-	}
-
-	// Append user-provided arguments
-	// CLI arguments take precedence over config file, so duplicates are fine
-	args = append(args, userArgs...)
-
-	return args
 }
