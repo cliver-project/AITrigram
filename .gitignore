@@ -27,6 +27,7 @@ go.work
 *.backup
 demo*
 
+Makefile.local
 config/_overlay/
 __debug*
 TODO.md

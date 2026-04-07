@@ -63,6 +63,10 @@ endif
 # Auto-detects podman or docker, preferring podman.
 CONTAINER_TOOL ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 
+# PUSH_ARGS defines extra arguments for container push commands (e.g. --authfile).
+# Override in Makefile.local for local-only config.
+PUSH_ARGS ?=
+
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
@@ -171,7 +175,7 @@ docker-build: ## Build docker image with the manager.
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
+	$(CONTAINER_TOOL) push $(PUSH_ARGS) ${IMG}
 
 DEV_IMG ?= ghcr.io/cliver-project/aitrigram-controller:dev
 
@@ -179,7 +183,7 @@ DEV_IMG ?= ghcr.io/cliver-project/aitrigram-controller:dev
 deploy-dev: manifests generate build kustomize ## Build, push, and deploy a dev image to the current cluster.
 	@echo "Building and pushing $(DEV_IMG) ..."
 	$(CONTAINER_TOOL) build --platform linux/amd64 -t $(DEV_IMG) .
-	$(CONTAINER_TOOL) push $(DEV_IMG)
+	$(CONTAINER_TOOL) push $(PUSH_ARGS) $(DEV_IMG)
 	$(eval IMG := $(DEV_IMG))
 	$(call kustomize-with-image,default,| $(KUBECTL) apply -f -)
 	$(KUBECTL) rollout restart deployment/aitrigram-controller-manager -n aitrigram-system
@@ -380,3 +384,7 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+# Include local overrides (gitignored). Create Makefile.local to set
+# PUSH_ARGS, DEV_IMG, CONTAINER_TOOL, etc. without touching this file.
+-include Makefile.local
