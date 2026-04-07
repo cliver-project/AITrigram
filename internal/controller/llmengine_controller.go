@@ -23,7 +23,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -90,19 +92,35 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Fetch referenced ModelRepositories
 	modelRepos, err := r.fetchModelRepositories(ctx, llmEngine)
 	if err != nil {
-		return r.updateStatus(ctx, llmEngine, "Error", "ModelRepositoryFetchFailed", err.Error())
+		r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "ModelRepositoryFetchFailed", err.Error())
+		return ctrl.Result{}, nil
 	}
 
 	if len(modelRepos) == 0 {
-		return r.updateStatus(ctx, llmEngine, "Pending", "NoModelsFound", "No ModelRepository resources found")
+		r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "NoModelsFound", "No ModelRepository resources found")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Check if all models are downloaded
 	for _, modelRepo := range modelRepos {
 		if modelRepo.Status.Phase != aitrigramv1.DownloadPhaseReady {
 			msg := fmt.Sprintf("Waiting for ModelRepository %s (phase: %s)", modelRepo.Name, modelRepo.Status.Phase)
-			// TODO maybe trigger the downloading if the autodownload is false
-			return r.updateStatus(ctx, llmEngine, "Pending", "WaitingForModels", msg)
+			r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+				meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+					Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
+					Status:  metav1.ConditionFalse,
+					Reason:  "WaitingForModels",
+					Message: msg,
+				})
+				meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+					Type:    aitrigramv1.LLMEngineConditionReady,
+					Status:  metav1.ConditionFalse,
+					Reason:  "WaitingForModels",
+					Message: msg,
+				})
+				s.Phase = deriveLLMEnginePhase(s.Conditions)
+			})
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
 		// For RWO storage, log node binding info if available
@@ -135,7 +153,8 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 		if err := r.validateGPUAvailability(ctx, llmEngine, requiredNodeName); err != nil {
-			return r.updateStatus(ctx, llmEngine, "Error", "GPUValidationFailed", err.Error())
+			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "GPUValidationFailed", err.Error())
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -145,8 +164,9 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for _, modelRepo := range modelRepos {
 		result, err := storage.EnsureLLMEngineStorage(ctx, r.Client, llmEngine, modelRepo)
 		if err != nil {
-			return r.updateStatus(ctx, llmEngine, "Pending", "StoragePending",
+			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "StoragePending",
 				fmt.Sprintf("Preparing storage for model %s: %v", modelRepo.Name, err))
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		storageResults[modelRepo.Name] = result
 	}
@@ -174,8 +194,9 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Reconcile component (creates/updates Deployment and Service)
 		if err := comp.Reconcile(compCtx); err != nil {
-			return r.updateStatus(ctx, llmEngine, "Error", "ReconcileFailed",
+			r.setCondition(ctx, llmEngine, aitrigramv1.LLMEngineConditionReady, metav1.ConditionFalse, "ReconcileFailed",
 				fmt.Sprintf("Failed to reconcile model %s: %v", modelRepo.Name, err))
+			return ctrl.Result{}, nil
 		}
 
 		// Check deployment readiness
@@ -196,18 +217,47 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	for i, mr := range modelRepos {
 		modelNames[i] = mr.Name
 	}
-	llmEngine.Status.ModelRepositories = modelNames
 
 	// Update referenced engines on each ModelRepository
 	r.updateReferencedEngines(ctx, modelNames)
 
 	if totalReady == totalDeployments {
-		return r.updateStatus(ctx, llmEngine, "Running", "DeploymentsReady",
-			fmt.Sprintf("All %d model deployments ready", totalDeployments))
+		r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+			s.ModelRepositories = modelNames
+			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+				Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
+				Status:  metav1.ConditionTrue,
+				Reason:  "ModelsReady",
+				Message: "All referenced models are available",
+			})
+			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+				Type:    aitrigramv1.LLMEngineConditionReady,
+				Status:  metav1.ConditionTrue,
+				Reason:  "DeploymentsReady",
+				Message: fmt.Sprintf("All %d model deployments ready", totalDeployments),
+			})
+			s.Phase = deriveLLMEnginePhase(s.Conditions)
+		})
+		return ctrl.Result{}, nil
 	}
 
-	return r.updateStatus(ctx, llmEngine, "Starting", "DeploymentsCreated",
-		fmt.Sprintf("%d/%d deployments ready", totalReady, totalDeployments))
+	r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+		s.ModelRepositories = modelNames
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type:    aitrigramv1.LLMEngineConditionModelsAvailable,
+			Status:  metav1.ConditionTrue,
+			Reason:  "ModelsReady",
+			Message: "All referenced models are available",
+		})
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type:    aitrigramv1.LLMEngineConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  "DeploymentsCreated",
+			Message: fmt.Sprintf("%d/%d deployments ready", totalReady, totalDeployments),
+		})
+		s.Phase = deriveLLMEnginePhase(s.Conditions)
+	})
+	return ctrl.Result{}, nil
 }
 
 func (r *LLMEngineReconciler) fetchModelRepositories(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) ([]*aitrigramv1.ModelRepository, error) {
@@ -379,39 +429,54 @@ func (r *LLMEngineReconciler) validateGPUAvailability(ctx context.Context, llmEn
 	return nil
 }
 
-func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, phase, reason, message string) (ctrl.Result, error) {
-	// Use retry logic to handle conflicts when multiple reconcile loops update status
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy of the resource
-		key := client.ObjectKeyFromObject(llmEngine)
+// syncStatus fetches a fresh copy, applies the mutation, and writes only if status changed.
+func (r *LLMEngineReconciler) syncStatus(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, mutate func(*aitrigramv1.LLMEngineStatus)) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		fresh := &aitrigramv1.LLMEngine{}
-		if err := r.Get(ctx, key, fresh); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(llmEngine), fresh); err != nil {
 			return err
 		}
-
-		// Skip update if nothing changed to avoid unnecessary generation bumps
-		if fresh.Status.Phase == phase && fresh.Status.Reason == reason && fresh.Status.Message == message {
+		existing := fresh.DeepCopy()
+		mutate(&fresh.Status)
+		if equality.Semantic.DeepEqual(existing.Status, fresh.Status) {
 			return nil
 		}
-
-		fresh.Status.Phase = phase
-		fresh.Status.Reason = reason
-		fresh.Status.Message = message
-		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-
 		return r.Status().Update(ctx, fresh)
 	})
+}
 
-	if err != nil {
-		return ctrl.Result{}, err
+// setCondition sets a single condition and derives Phase.
+func (r *LLMEngineReconciler) setCondition(ctx context.Context, llmEngine *aitrigramv1.LLMEngine, condType string, status metav1.ConditionStatus, reason, message string) {
+	if err := r.syncStatus(ctx, llmEngine, func(s *aitrigramv1.LLMEngineStatus) {
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type:    condType,
+			Status:  status,
+			Reason:  reason,
+			Message: message,
+		})
+		s.Phase = deriveLLMEnginePhase(s.Conditions)
+	}); err != nil {
+		log.FromContext(context.TODO()).Error(err, "Failed to set condition", "type", condType)
 	}
+}
 
-	// Requeue if pending
-	if phase == "Pending" {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+// deriveLLMEnginePhase derives the Phase from the Ready condition.
+func deriveLLMEnginePhase(conditions []metav1.Condition) string {
+	ready := meta.FindStatusCondition(conditions, aitrigramv1.LLMEngineConditionReady)
+	if ready == nil {
+		return "Pending"
 	}
-
-	return ctrl.Result{}, nil
+	if ready.Status == metav1.ConditionTrue {
+		return "Running"
+	}
+	switch ready.Reason {
+	case "DeploymentsCreated":
+		return "Starting"
+	case "StoragePending", "WaitingForModels", "NoModelsFound":
+		return "Pending"
+	default:
+		return "Error"
+	}
 }
 
 func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *aitrigramv1.LLMEngine) error {

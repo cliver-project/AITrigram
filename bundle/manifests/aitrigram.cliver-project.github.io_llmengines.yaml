@@ -505,14 +505,6 @@ spec:
                   - type
                   type: object
                 type: array
-              lastUpdated:
-                description: LastUpdated is the timestamp of the last status update
-                format: date-time
-                type: string
-              message:
-                description: Message provides additional information about the current
-                  phase
-                type: string
               modelRepositories:
                 description: ModelRepositories lists the ModelRepository resources
                   being used
@@ -521,9 +513,7 @@ spec:
                 type: array
               phase:
                 description: Phase represents the current phase of the LLM engine
-                type: string
-              reason:
-                description: Reason provides the reason for the current phase
+                  (derived from conditions)
                 type: string
             type: object
         type: object

@@ -21,7 +21,9 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
@@ -85,7 +87,7 @@ func (r *ModelRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if modelRepo.GetDeletionTimestamp() != nil {
 			return ctrl.Result{}, r.handleDeletion(ctx, modelRepo, nil)
 		}
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "StorageProviderFailed",
 			fmt.Sprintf("Failed to create storage provider: %v", err))
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -131,7 +133,7 @@ func (r *ModelRepositoryReconciler) reconcileStorage(
 	logger := log.FromContext(ctx)
 
 	if err := provider.ValidateConfig(); err != nil {
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, "ValidationFailed",
 			fmt.Sprintf("Storage validation failed: %v", err))
 		return nil, &ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -142,7 +144,7 @@ func (r *ModelRepositoryReconciler) reconcileStorage(
 	}
 
 	if err := provider.CreateStorage(ctx, namespace); err != nil {
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionStorageReady, metav1.ConditionFalse, "ProvisionFailed",
 			fmt.Sprintf("Failed to provision storage: %v", err))
 		return nil, &ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -338,7 +340,7 @@ func (r *ModelRepositoryReconciler) handleJobStatus(
 		rs := ensureRevStatus()
 		rs.Status = aitrigramv1.DownloadPhaseFailed
 		_ = r.updateRevisionStatus(ctx, modelRepo, rs)
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed,
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "DownloadFailed",
 			fmt.Sprintf("Download job failed for revision %s", revRef.Name))
 		return false, &ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
@@ -353,7 +355,7 @@ func (r *ModelRepositoryReconciler) handleJobStatus(
 	return true, nil, nil
 }
 
-// updateOverallPhase updates the ModelRepository phase based on revision statuses.
+// updateOverallPhase updates the ModelRepository conditions based on revision statuses.
 func (r *ModelRepositoryReconciler) updateOverallPhase(
 	ctx context.Context,
 	modelRepo *aitrigramv1.ModelRepository,
@@ -369,10 +371,10 @@ func (r *ModelRepositoryReconciler) updateOverallPhase(
 		}
 	}
 
-	if allReady && modelRepo.Status.Phase != aitrigramv1.DownloadPhaseReady {
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseReady, "All revisions downloaded successfully")
-	} else if anyJobRunning && modelRepo.Status.Phase != aitrigramv1.DownloadPhaseDownloading {
-		_ = r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseDownloading, "Downloading revisions")
+	if allReady {
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionTrue, "AllRevisionsReady", "All revisions downloaded successfully")
+	} else if anyJobRunning {
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "Downloading", "Downloading revisions")
 	}
 }
 
@@ -402,9 +404,7 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 		logger.Info("Blocking ModelRepository deletion", "reason", msg)
 
 		// Update status to inform the user
-		if err := r.updateModelRepoStatus(ctx, modelRepo, aitrigramv1.DownloadPhaseFailed, msg); err != nil {
-			logger.Error(err, "Failed to update status")
-		}
+		r.setCondition(ctx, modelRepo, aitrigramv1.ModelRepoConditionReady, metav1.ConditionFalse, "DeletionBlocked", msg)
 
 		// Return error to requeue and keep checking
 		return fmt.Errorf("deletion blocked: %s", msg)
@@ -454,27 +454,52 @@ func (r *ModelRepositoryReconciler) handleDeletion(ctx context.Context, modelRep
 	})
 }
 
-// updateModelRepoStatus updates the ModelRepository status with retry logic to handle conflicts
-func (r *ModelRepositoryReconciler) updateModelRepoStatus(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, phase aitrigramv1.DownloadPhase, message string) error {
+// syncStatus fetches a fresh copy, applies the mutation, and writes only if status changed.
+func (r *ModelRepositoryReconciler) syncStatus(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, mutate func(*aitrigramv1.ModelRepositoryStatus)) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy of the resource
-		key := client.ObjectKeyFromObject(modelRepo)
 		fresh := &aitrigramv1.ModelRepository{}
-		if err := r.Get(ctx, key, fresh); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(modelRepo), fresh); err != nil {
 			return err
 		}
-
-		// Skip update if nothing changed to avoid unnecessary reconcile triggers
-		if fresh.Status.Phase == phase && fresh.Status.Message == message {
+		existing := fresh.DeepCopy()
+		mutate(&fresh.Status)
+		if equality.Semantic.DeepEqual(existing.Status, fresh.Status) {
 			return nil
 		}
-
-		fresh.Status.Phase = phase
-		fresh.Status.Message = message
-		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-
 		return r.Status().Update(ctx, fresh)
 	})
+}
+
+// setCondition sets a single condition and derives Phase.
+func (r *ModelRepositoryReconciler) setCondition(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, condType string, status metav1.ConditionStatus, reason, message string) {
+	if err := r.syncStatus(ctx, modelRepo, func(s *aitrigramv1.ModelRepositoryStatus) {
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type:    condType,
+			Status:  status,
+			Reason:  reason,
+			Message: message,
+		})
+		s.Phase = deriveModelRepoPhase(s.Conditions)
+	}); err != nil {
+		log.FromContext(context.TODO()).Error(err, "Failed to set condition", "type", condType)
+	}
+}
+
+// deriveModelRepoPhase derives the Phase from the Ready condition.
+func deriveModelRepoPhase(conditions []metav1.Condition) aitrigramv1.DownloadPhase {
+	ready := meta.FindStatusCondition(conditions, aitrigramv1.ModelRepoConditionReady)
+	if ready == nil {
+		return aitrigramv1.DownloadPhasePending
+	}
+	if ready.Status == metav1.ConditionTrue {
+		return aitrigramv1.DownloadPhaseReady
+	}
+	switch ready.Reason {
+	case "Downloading":
+		return aitrigramv1.DownloadPhaseDownloading
+	default:
+		return aitrigramv1.DownloadPhaseFailed
+	}
 }
 
 // deleteStaleCleanupJob checks for and deletes any existing cleanup job for the ModelRepository revision
@@ -570,38 +595,22 @@ func (r *ModelRepositoryReconciler) findRevisionStatus(modelRepo *aitrigramv1.Mo
 
 // updateRevisionStatus updates or adds a revision to the status.availableRevisions list
 func (r *ModelRepositoryReconciler) updateRevisionStatus(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, revStatus *aitrigramv1.RevisionStatus) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy
-		key := client.ObjectKeyFromObject(modelRepo)
-		fresh := &aitrigramv1.ModelRepository{}
-		if err := r.Get(ctx, key, fresh); err != nil {
-			return err
-		}
-
-		// Find and update or append
+	return r.syncStatus(ctx, modelRepo, func(s *aitrigramv1.ModelRepositoryStatus) {
 		found := false
-		for i := range fresh.Status.AvailableRevisions {
-			if fresh.Status.AvailableRevisions[i].Name == revStatus.Name {
-				// Skip update if nothing changed
-				if fresh.Status.AvailableRevisions[i].Status == revStatus.Status &&
-					fresh.Status.AvailableRevisions[i].CommitHash == revStatus.CommitHash {
-					return nil
-				}
-				fresh.Status.AvailableRevisions[i] = *revStatus
+		for i := range s.AvailableRevisions {
+			if s.AvailableRevisions[i].Name == revStatus.Name {
+				s.AvailableRevisions[i] = *revStatus
 				found = true
 				break
 			}
 		}
 		if !found {
-			fresh.Status.AvailableRevisions = append(fresh.Status.AvailableRevisions, *revStatus)
+			s.AvailableRevisions = append(s.AvailableRevisions, *revStatus)
 		}
-
-		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-		return r.Status().Update(ctx, fresh)
 	})
 }
 
-// updateStorageStatus updates the storage status in ModelRepository
+// updateStorageStatus updates the storage status in ModelRepository and sets StorageReady condition
 func (r *ModelRepositoryReconciler) updateStorageStatus(ctx context.Context, modelRepo *aitrigramv1.ModelRepository, provider *storage.StorageClassProvider) error {
 	namespace := r.OperatorNamespace
 	if namespace == "" {
@@ -613,26 +622,14 @@ func (r *ModelRepositoryReconciler) updateStorageStatus(ctx context.Context, mod
 		return fmt.Errorf("failed to get storage status: %w", err)
 	}
 
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy
-		key := client.ObjectKeyFromObject(modelRepo)
-		fresh := &aitrigramv1.ModelRepository{}
-		if err := r.Get(ctx, key, fresh); err != nil {
-			return err
-		}
-
-		// Skip update if storage status hasn't changed
-		if fresh.Status.Storage != nil && storageStatus != nil &&
-			fresh.Status.Storage.StorageClass == storageStatus.StorageClass &&
-			fresh.Status.Storage.AccessMode == storageStatus.AccessMode &&
-			fresh.Status.Storage.Capacity == storageStatus.Capacity &&
-			fresh.Status.Storage.BoundNodeName == storageStatus.BoundNodeName {
-			return nil
-		}
-
-		fresh.Status.Storage = storageStatus
-		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
-		return r.Status().Update(ctx, fresh)
+	return r.syncStatus(ctx, modelRepo, func(s *aitrigramv1.ModelRepositoryStatus) {
+		s.Storage = storageStatus
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type:    aitrigramv1.ModelRepoConditionStorageReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  "StorageProvisioned",
+			Message: fmt.Sprintf("Storage provisioned with class %s", storageStatus.StorageClass),
+		})
 	})
 }
 

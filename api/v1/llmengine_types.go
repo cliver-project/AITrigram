@@ -194,23 +194,20 @@ type LLMEngineSpec struct {
 	HostIPC bool `json:"hostIPC,omitempty"`
 }
 
+// Condition type constants for LLMEngine
+const (
+	// LLMEngineConditionReady indicates all deployments are running and ready
+	LLMEngineConditionReady = "Ready"
+
+	// LLMEngineConditionModelsAvailable indicates all referenced ModelRepositories are ready
+	LLMEngineConditionModelsAvailable = "ModelsAvailable"
+)
+
 // LLMEngineStatus defines the observed state of LLMEngine.
 type LLMEngineStatus struct {
-	// Phase represents the current phase of the LLM engine
+	// Phase represents the current phase of the LLM engine (derived from conditions)
 	// +optional
 	Phase string `json:"phase,omitempty"`
-
-	// Reason provides the reason for the current phase
-	// +optional
-	Reason string `json:"reason,omitempty"`
-
-	// Message provides additional information about the current phase
-	// +optional
-	Message string `json:"message,omitempty"`
-
-	// LastUpdated is the timestamp of the last status update
-	// +optional
-	LastUpdated *metav1.Time `json:"lastUpdated,omitempty"`
 
 	// Conditions represent the latest available observations of the LLMEngine's state.
 	// +optional

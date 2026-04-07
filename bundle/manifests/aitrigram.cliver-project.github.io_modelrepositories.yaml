@@ -14,7 +14,29 @@ spec:
     singular: modelrepository
   scope: Cluster
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.source.modelId
+      name: Model
+      type: string
+    - jsonPath: .spec.source.origin
+      name: Origin
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.storage.storageClass
+      name: Storage Class
+      type: string
+    - jsonPath: .status.storage.accessMode
+      name: Access Mode
+      type: string
+    - jsonPath: .status.referencedEngines
+      name: Engines
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: |-
@@ -258,22 +280,20 @@ spec:
                   - type
                   type: object
                 type: array
-              lastUpdated:
-                description: LastUpdated is the timestamp of the last status update
-                format: date-time
-                type: string
-              message:
-                description: Message provides additional information about the current
-                  phase
-                type: string
               phase:
                 description: Phase represents the current phase of the model repository
+                  (derived from conditions)
                 enum:
                 - Pending
                 - Downloading
                 - Ready
                 - Failed
                 - Deprecated
+                type: string
+              referencedEngines:
+                description: |-
+                  ReferencedEngines is a comma-separated list of LLMEngine names that reference this ModelRepository
+                  Updated by the LLMEngine controller
                 type: string
               storage:
                 description: |-

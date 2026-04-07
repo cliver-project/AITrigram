@@ -176,19 +176,20 @@ type RevisionStatus struct {
 	Status DownloadPhase `json:"status"`
 }
 
+// Condition type constants for ModelRepository
+const (
+	// ModelRepoConditionReady indicates all revisions are downloaded and the model is ready
+	ModelRepoConditionReady = "Ready"
+
+	// ModelRepoConditionStorageReady indicates storage is provisioned and bound
+	ModelRepoConditionStorageReady = "StorageReady"
+)
+
 // ModelRepositoryStatus defines the observed state of ModelRepository
 type ModelRepositoryStatus struct {
-	// Phase represents the current phase of the model repository
+	// Phase represents the current phase of the model repository (derived from conditions)
 	// +optional
 	Phase DownloadPhase `json:"phase,omitempty"`
-
-	// Message provides additional information about the current phase
-	// +optional
-	Message string `json:"message,omitempty"`
-
-	// LastUpdated is the timestamp of the last status update
-	// +optional
-	LastUpdated *metav1.Time `json:"lastUpdated,omitempty"`
 
 	// Conditions represent the latest available observations of the ModelRepository's state.
 	// +optional

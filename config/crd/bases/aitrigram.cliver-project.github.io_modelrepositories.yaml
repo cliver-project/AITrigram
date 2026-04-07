@@ -280,16 +280,9 @@ spec:
                   - type
                   type: object
                 type: array
-              lastUpdated:
-                description: LastUpdated is the timestamp of the last status update
-                format: date-time
-                type: string
-              message:
-                description: Message provides additional information about the current
-                  phase
-                type: string
               phase:
                 description: Phase represents the current phase of the model repository
+                  (derived from conditions)
                 enum:
                 - Pending
                 - Downloading
