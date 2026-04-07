@@ -203,6 +203,11 @@ type ModelRepositoryStatus struct {
 	// Only populated when spec.source.revisions is specified
 	// +optional
 	AvailableRevisions []RevisionStatus `json:"availableRevisions,omitempty"`
+
+	// ReferencedEngines is a comma-separated list of LLMEngine names that reference this ModelRepository
+	// Updated by the LLMEngine controller
+	// +optional
+	ReferencedEngines string `json:"referencedEngines,omitempty"`
 }
 
 // StorageStatus contains detailed storage backend information
@@ -254,6 +259,13 @@ type BackendReference struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.spec.source.modelId`
+// +kubebuilder:printcolumn:name="Origin",type=string,JSONPath=`.spec.source.origin`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Storage Class",type=string,JSONPath=`.status.storage.storageClass`
+// +kubebuilder:printcolumn:name="Access Mode",type=string,JSONPath=`.status.storage.accessMode`
+// +kubebuilder:printcolumn:name="Engines",type=string,JSONPath=`.status.referencedEngines`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ModelRepository is the Schema for the modelrepositories API
 // ModelRepository is a cluster wide CRD so that models can be shared across namespaces.

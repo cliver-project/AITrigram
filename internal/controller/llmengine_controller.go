@@ -17,6 +17,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,6 +56,7 @@ type LLMEngineReconciler struct {
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=llmengines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=llmengines/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aitrigram.cliver-project.github.io,resources=modelrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -194,6 +197,9 @@ func (r *LLMEngineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		modelNames[i] = mr.Name
 	}
 	llmEngine.Status.ModelRepositories = modelNames
+
+	// Update referenced engines on each ModelRepository
+	r.updateReferencedEngines(ctx, modelNames)
 
 	if totalReady == totalDeployments {
 		return r.updateStatus(ctx, llmEngine, "Running", "DeploymentsReady",
@@ -383,7 +389,11 @@ func (r *LLMEngineReconciler) updateStatus(ctx context.Context, llmEngine *aitri
 			return err
 		}
 
-		// Update status on the fresh copy
+		// Skip update if nothing changed to avoid unnecessary generation bumps
+		if fresh.Status.Phase == phase && fresh.Status.Reason == reason && fresh.Status.Message == message {
+			return nil
+		}
+
 		fresh.Status.Phase = phase
 		fresh.Status.Reason = reason
 		fresh.Status.Message = message
@@ -408,11 +418,16 @@ func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *ait
 	logger := log.FromContext(ctx)
 
 	// Cleanup read-only PV+PVC for each model reference (never touches underlying data)
+	modelNames := make([]string, 0, len(llmEngine.Spec.ModelRefs))
 	for _, ref := range llmEngine.Spec.ModelRefs {
+		modelNames = append(modelNames, ref.Name)
 		if err := storage.CleanupLLMEngineStorage(ctx, r.Client, llmEngine, ref.Name); err != nil {
 			logger.Error(err, "Failed to cleanup storage for model", "model", ref.Name)
 		}
 	}
+
+	// Update referenced engines (this engine is being deleted, so it will be excluded)
+	r.updateReferencedEngines(ctx, modelNames)
 
 	// Remove finalizer with retry to handle conflicts
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -427,6 +442,63 @@ func (r *LLMEngineReconciler) handleDeletion(ctx context.Context, llmEngine *ait
 		controllerutil.RemoveFinalizer(fresh, LLMEngineFinalizer)
 		return r.Update(ctx, fresh)
 	})
+}
+
+// updateReferencedEngines scans all LLMEngines and updates each ModelRepository's
+// status.referencedEngines with a comma-separated list of referencing engine names.
+func (r *LLMEngineReconciler) updateReferencedEngines(ctx context.Context, modelRepoNames []string) {
+	logger := log.FromContext(ctx)
+
+	// List all LLMEngines across all namespaces
+	allEngines := &aitrigramv1.LLMEngineList{}
+	if err := r.List(ctx, allEngines); err != nil {
+		logger.Error(err, "Failed to list LLMEngines for referenced engines update")
+		return
+	}
+
+	// Build map: modelRepo name -> set of engine names (namespace/name)
+	refMap := map[string]map[string]struct{}{}
+	for _, name := range modelRepoNames {
+		refMap[name] = map[string]struct{}{}
+	}
+
+	for _, engine := range allEngines.Items {
+		// Skip engines being deleted
+		if engine.DeletionTimestamp != nil {
+			continue
+		}
+		for _, ref := range engine.Spec.ModelRefs {
+			if _, tracked := refMap[ref.Name]; tracked {
+				engineKey := fmt.Sprintf("%s/%s", engine.Namespace, engine.Name)
+				refMap[ref.Name][engineKey] = struct{}{}
+			}
+		}
+	}
+
+	// Update each ModelRepository's status
+	for _, repoName := range modelRepoNames {
+		engines := refMap[repoName]
+		names := make([]string, 0, len(engines))
+		for name := range engines {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		referencedStr := strings.Join(names, ",")
+
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			modelRepo := &aitrigramv1.ModelRepository{}
+			if err := r.Get(ctx, types.NamespacedName{Name: repoName}, modelRepo); err != nil {
+				return client.IgnoreNotFound(err)
+			}
+			if modelRepo.Status.ReferencedEngines == referencedStr {
+				return nil // no change
+			}
+			modelRepo.Status.ReferencedEngines = referencedStr
+			return r.Status().Update(ctx, modelRepo)
+		}); err != nil {
+			logger.Error(err, "Failed to update referencedEngines", "modelRepository", repoName)
+		}
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

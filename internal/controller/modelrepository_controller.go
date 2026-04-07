@@ -464,7 +464,11 @@ func (r *ModelRepositoryReconciler) updateModelRepoStatus(ctx context.Context, m
 			return err
 		}
 
-		// Update status on the fresh copy
+		// Skip update if nothing changed to avoid unnecessary reconcile triggers
+		if fresh.Status.Phase == phase && fresh.Status.Message == message {
+			return nil
+		}
+
 		fresh.Status.Phase = phase
 		fresh.Status.Message = message
 		fresh.Status.LastUpdated = &metav1.Time{Time: time.Now()}
@@ -578,6 +582,11 @@ func (r *ModelRepositoryReconciler) updateRevisionStatus(ctx context.Context, mo
 		found := false
 		for i := range fresh.Status.AvailableRevisions {
 			if fresh.Status.AvailableRevisions[i].Name == revStatus.Name {
+				// Skip update if nothing changed
+				if fresh.Status.AvailableRevisions[i].Status == revStatus.Status &&
+					fresh.Status.AvailableRevisions[i].CommitHash == revStatus.CommitHash {
+					return nil
+				}
 				fresh.Status.AvailableRevisions[i] = *revStatus
 				found = true
 				break
@@ -610,6 +619,15 @@ func (r *ModelRepositoryReconciler) updateStorageStatus(ctx context.Context, mod
 		fresh := &aitrigramv1.ModelRepository{}
 		if err := r.Get(ctx, key, fresh); err != nil {
 			return err
+		}
+
+		// Skip update if storage status hasn't changed
+		if fresh.Status.Storage != nil && storageStatus != nil &&
+			fresh.Status.Storage.StorageClass == storageStatus.StorageClass &&
+			fresh.Status.Storage.AccessMode == storageStatus.AccessMode &&
+			fresh.Status.Storage.Capacity == storageStatus.Capacity &&
+			fresh.Status.Storage.BoundNodeName == storageStatus.BoundNodeName {
+			return nil
 		}
 
 		fresh.Status.Storage = storageStatus
