@@ -403,13 +403,8 @@ func BuildVLLMEnv(llmEngine *aitrigramv1.LLMEngine, modelRepo *aitrigramv1.Model
 		})
 	}
 
-	// Add environment paths (model storage locations)
-	for envName, path := range envPaths {
-		commonEnv = append(commonEnv, corev1.EnvVar{
-			Name:  envName,
-			Value: path,
-		})
-	}
+	// Add environment paths (model storage locations) — sorted for deterministic pod template hash
+	commonEnv = append(commonEnv, sortedEnvFromMap(envPaths)...)
 
 	// Add hardware-specific environment variables
 	var specificEnv []corev1.EnvVar
